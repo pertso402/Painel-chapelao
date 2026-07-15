@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapelão — Painel de Pedidos</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&family=Sora:wght@600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- LOGIN SCREEN -->
+  <div class="login-screen" id="login-screen">
+    <div class="login-card">
+      <div class="login-logo">🎩</div>
+      <h1>Restaurante Chapelão</h1>
+      <p>Painel de Pedidos</p>
+      <input type="password" id="login-senha" class="input-field" placeholder="Senha de acesso" autocomplete="off">
+      <button class="btn-entrar" onclick="fazerLogin()">Entrar</button>
+      <p class="login-erro" id="login-erro"></p>
+    </div>
+  </div>
+
+  <!-- PAINEL PRINCIPAL -->
+  <div class="painel-app" id="painel-app" style="display:none">
+
+    <!-- HEADER -->
+    <header class="painel-header">
+      <div class="painel-brand">
+        <span>🎩</span>
+        <span class="painel-titulo">Chapelão — Pedidos</span>
+      </div>
+      <div class="painel-header-right">
+        <div class="resumo-dia" id="resumo-dia">
+          <span class="resumo-item-h">📦 <strong id="qt-pedidos">0</strong></span>
+          <span class="resumo-item-h">💰 <strong id="total-dia">R$ 0,00</strong></span>
+        </div>
+        <div class="loja-toggle" id="loja-toggle" onclick="toggleLoja()">
+          <span id="loja-toggle-label">🟢 Aberta</span>
+        </div>
+        <a href="/admin" class="btn-admin-link">⚙️ Admin</a>
+        <button class="btn-sair" onclick="sair()">Sair</button>
+      </div>
+    </header>
+
+    <!-- TABS -->
+    <nav class="tabs-nav">
+      <button class="tab-btn active" data-status="pendente" onclick="selecionarTab('pendente', this)">
+        Novos <span class="tab-badge" id="badge-pendente">0</span>
+      </button>
+      <button class="tab-btn" data-status="preparando" onclick="selecionarTab('preparando', this)">
+        Preparando <span class="tab-badge" id="badge-preparando">0</span>
+      </button>
+      <button class="tab-btn" data-status="pronto" onclick="selecionarTab('pronto', this)">
+        Prontos <span class="tab-badge" id="badge-pronto">0</span>
+      </button>
+      <button class="tab-btn" data-status="entregue" onclick="selecionarTab('entregue', this)">
+        Finalizados <span class="tab-badge" id="badge-entregue">0</span>
+      </button>
+      <button class="tab-btn" data-status="cancelado" onclick="selecionarTab('cancelado', this)">
+        Cancelados <span class="tab-badge" id="badge-cancelado">0</span>
+      </button>
+    </nav>
+
+    <!-- PEDIDOS GRID -->
+    <main class="pedidos-main" id="pedidos-main">
+      <div class="loading-pedidos" id="loading-pedidos">
+        <div class="loading-spinner"></div>
+        <p>Carregando pedidos...</p>
+      </div>
+      <div class="pedidos-grid" id="pedidos-grid" style="display:none"></div>
+      <div class="pedidos-vazio" id="pedidos-vazio" style="display:none">
+        <span>📭</span>
+        <p>Nenhum pedido aqui</p>
+      </div>
+    </main>
+  </div>
+
+  <!-- MODAL DETALHES DO PEDIDO -->
+  <div class="modal-overlay" id="modal-pedido">
+    <div class="modal-card" id="modal-pedido-card">
+      <!-- populated by JS -->
+    </div>
+  </div>
+
+  <!-- AUDIO NOTIFICACAO -->
+  <audio id="notif-sound" preload="auto">
+    <source src="data:audio/wav;base64,UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2U5F2+jvuqxdEEqfsGr4qlwQip2wrXnq3FBMnnCteylckUxcsCy6KRwSS5ywLTmpHBQL3HBuOejckwydcG55aBzRzZxu7XoonVMPHW/uueeeE45eMG35JV5TEB3wbrmkXlTRHrCvOaMelZHe8O96YR+WE19xL/si4FfUI3Ky/KNhGJXkc3Q85GIZ1+V0NT0loxqY5jW2fmYj25ontvd/JuSc2+i3+D+n5Z4bKXj4gCikX1xqOXjBKORf3Cr5+QGoZF+cKvn5AWhj4Bwq+fkBqGSfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGoZF9cKvn5AWhkX1wq+fkBqGRfXCr5+QGo=" type="audio/wav">
+  </audio>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="painel.js"></script>
+</body>
+</html>

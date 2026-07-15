@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chapelão — Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <style>
+    /* Admin-specific styles */
+    .admin-layout { display: flex; flex-direction: column; min-height: 100vh; }
+
+    .admin-tabs {
+      display: flex;
+      gap: 4px;
+      padding: 8px 16px;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .admin-tabs::-webkit-scrollbar { display: none; }
+
+    .admin-content { padding: 20px 16px; max-width: 900px; margin: 0 auto; width: 100%; }
+
+    .section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+
+    .section-title {
+      font-size: 18px;
+      font-weight: 800;
+      color: var(--amarelo);
+    }
+
+    .btn-novo {
+      background: var(--amarelo);
+      color: var(--marinho);
+      border: none;
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 700;
+      padding: 10px 18px;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background .2s;
+    }
+    .btn-novo:hover { background: #E6A800; }
+
+    .produtos-admin-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .produto-admin-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .prod-admin-img {
+      width: 60px;
+      height: 60px;
+      border-radius: 8px;
+      object-fit: cover;
+      background: var(--bg-card2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+      flex-shrink: 0;
+    }
+
+    .prod-admin-info { flex: 1; min-width: 0; }
+    .prod-admin-nome { font-size: 15px; font-weight: 700; }
+    .prod-admin-cat { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+    .prod-admin-preco { font-size: 15px; font-weight: 800; color: var(--amarelo); margin-top: 4px; }
+
+    .prod-admin-actions { display: flex; gap: 6px; }
+
+    .btn-icon {
+      background: var(--bg-card2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-muted);
+      font-size: 16px;
+      width: 36px;
+      height: 36px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all .2s;
+    }
+    .btn-icon:hover { background: var(--bg); color: var(--text); }
+    .btn-icon.editar:hover { border-color: var(--amarelo); color: var(--amarelo); }
+    .btn-icon.deletar:hover { border-color: var(--vermelho); color: var(--vermelho); }
+
+    .toggle-disponivel {
+      width: 40px;
+      height: 22px;
+      border-radius: 11px;
+      background: var(--border);
+      cursor: pointer;
+      position: relative;
+      transition: background .2s;
+      border: none;
+      flex-shrink: 0;
+    }
+    .toggle-disponivel.on { background: #4CAF50; }
+    .toggle-disponivel::after {
+      content: '';
+      position: absolute;
+      top: 3px; left: 3px;
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      background: #fff;
+      transition: transform .2s;
+    }
+    .toggle-disponivel.on::after { transform: translateX(18px); }
+
+    /* MISTURA DO DIA */
+    .mistura-editor {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .mistura-preview {
+      background: rgba(190,41,47,.1);
+      border: 1px solid rgba(190,41,47,.3);
+      border-left: 4px solid var(--vermelho);
+      border-radius: 10px;
+      padding: 14px;
+    }
+
+    .mistura-preview-label {
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: var(--vermelho);
+      margin-bottom: 4px;
+    }
+
+    textarea.input-field {
+      resize: vertical;
+      min-height: 80px;
+    }
+
+    /* INFO RESTAURANTE */
+    .info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+    }
+
+    @media (max-width: 540px) { .info-grid { grid-template-columns: 1fr; } }
+
+    /* MODAL PRODUTO */
+    .form-produto {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 480px) { .form-row { grid-template-columns: 1fr; } }
+
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--bg-card2);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+    }
+
+    .toggle-row span { font-size: 14px; font-weight: 600; }
+
+    select.input-field {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239E9A94' stroke-width='2.5'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      appearance: none;
+      cursor: pointer;
+    }
+
+    .upload-area {
+      border: 2px dashed var(--border);
+      border-radius: 10px;
+      padding: 20px;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color .2s;
+    }
+    .upload-area:hover { border-color: var(--amarelo); }
+    .upload-area input { display: none; }
+    .upload-area p { font-size: 13px; color: var(--text-muted); margin-top: 6px; }
+    .upload-preview { width: 80px; height: 80px; object-fit: cover; border-radius: 8px; margin: 0 auto 8px; display: block; }
+  </style>
+</head>
+<body>
+
+  <!-- LOGIN -->
+  <div class="login-screen" id="login-screen">
+    <div class="login-card">
+      <div class="login-logo">⚙️</div>
+      <h1>Painel Admin</h1>
+      <p>Restaurante Chapelão</p>
+      <input type="password" id="login-senha" class="input-field" placeholder="Senha de acesso" autocomplete="off">
+      <button class="btn-entrar" onclick="fazerLogin()">Entrar</button>
+      <p class="login-erro" id="login-erro"></p>
+    </div>
+  </div>
+
+  <!-- ADMIN LAYOUT -->
+  <div class="admin-layout" id="admin-app" style="display:none">
+
+    <header class="painel-header">
+      <div class="painel-brand">
+        <span>🎩</span>
+        <span class="painel-titulo">Admin — Chapelão</span>
+      </div>
+      <div class="painel-header-right">
+        <a href="/" class="btn-admin-link">📦 Pedidos</a>
+        <button class="btn-sair" onclick="sair()">Sair</button>
+      </div>
+    </header>
+
+    <nav class="admin-tabs">
+      <button class="tab-btn active" onclick="mudarAba('produtos', this)">🍽️ Produtos</button>
+      <button class="tab-btn" onclick="mudarAba('mistura', this)">🌶️ Mistura do Dia</button>
+      <button class="tab-btn" onclick="mudarAba('info', this)">⚙️ Configurações</button>
+    </nav>
+
+    <div class="admin-content" id="admin-content">
+      <!-- populated by JS -->
+    </div>
+  </div>
+
+  <!-- MODAL PRODUTO -->
+  <div class="modal-overlay" id="modal-produto">
+    <div class="modal-card" id="modal-produto-card">
+      <!-- populated by JS -->
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <script src="admin.js"></script>
+</body>
+</html>
