@@ -520,13 +520,13 @@ async function enviarBuffet(arquivo) {
 /* ─── CARDÁPIO DO DIA (marmitex: misturas + acompanhamentos) ───── */
 // O agente de atendimento lê `itens_do_dia` sempre que alguém pergunta pela
 // marmitex (tool buscar_itens_do_dia). Este modal é a forma rápida de marcar,
-// todo dia, quais das 2 misturas (carnes) e quais acompanhamentos estão de
-// pé — sem entrar na tela cheia de Porcionamento do ERP.
+// todo dia, quais carnes e quais acompanhamentos estão de pé — sem entrar na
+// tela cheia de Porcionamento do ERP.
 //
-// Regra de negócio: até 2 carnes por dia (é "a mistura do dia", não um menu
-// inteiro de carnes). Acompanhamento não tem esse limite — normalmente todos
-// os cadastrados ficam disponíveis, mas dá pra tirar o que faltou.
-const MAX_CARNES_DIA = 2
+// Sem limite de quantidade aqui: o chefe pode preparar quantas carnes quiser
+// num dia. O limite de "o cliente escolhe até 2" é regra do PEDIDO, aplicada
+// na hora de montar a marmitex — não faz sentido travar o que o cardápio do
+// dia oferece.
 
 // inventory_items/itens_do_dia usam o RBAC do ERP (exige usuário autenticado
 // com permissão de porcionamento) — a chave anon deste painel não passa por
@@ -615,7 +615,7 @@ async function abrirCardapio(preSelecao) {
 
     <div>
       <h3 style="font-size:13px;font-weight:800;color:var(--text);margin-bottom:2px">
-        🥩 Misturas (carnes) — escolha até ${MAX_CARNES_DIA}
+        🥩 Misturas (carnes)
       </h3>
       <div id="cardapio-carnes" style="display:flex;flex-direction:column">
         ${carnes.map(c => linhaItem(c, ativosHoje.has(c.id))).join('') || '<p style="font-size:12px;color:var(--text-muted)">Nenhuma carne cadastrada.</p>'}
@@ -635,19 +635,6 @@ async function abrirCardapio(preSelecao) {
     <button class="btn-status" id="btn-salvar-cardapio" onclick="salvarCardapio()"
             style="width:100%;text-align:center;cursor:pointer">💾 Salvar cardápio de hoje</button>`
 
-  // Trava de até 2 carnes: desmarcar sempre liberado; marcar a 3ª é bloqueado
-  // na hora, em vez de deixar salvar e só reclamar depois.
-  document.querySelectorAll('#cardapio-carnes .chk-cardapio').forEach(chk => {
-    chk.addEventListener('change', () => {
-      const marcadas = document.querySelectorAll('#cardapio-carnes .chk-cardapio:checked')
-      if (marcadas.length > MAX_CARNES_DIA) {
-        chk.checked = false
-        document.getElementById('cardapio-erro').textContent = `Máximo de ${MAX_CARNES_DIA} misturas por dia — desmarque uma antes de escolher outra.`
-      } else {
-        document.getElementById('cardapio-erro').textContent = ''
-      }
-    })
-  })
 }
 
 function fecharCardapio() {
