@@ -262,7 +262,7 @@ body::before {
   color: #FCA5A5;
 }
 
-.btn-admin-link, .btn-sair {
+.btn-buffet, .btn-admin-link, .btn-sair {
   background: var(--surface-2);
   color: var(--text-2);
   text-decoration: none;
@@ -275,7 +275,15 @@ body::before {
   cursor: pointer;
   transition: all .2s;
 }
-.btn-admin-link:hover, .btn-sair:hover { color: var(--text); border-color: var(--border-2); background: var(--surface-3); }
+.btn-buffet:hover, .btn-admin-link:hover, .btn-sair:hover { color: var(--text); border-color: var(--border-2); background: var(--surface-3); }
+
+/* Vídeo do buffet ainda não enviado hoje: a campanha do almoço depende dele,
+   então o botão fica em alerta até a equipe subir o vídeo. */
+.btn-buffet.pendente {
+  color: var(--red-2);
+  border-color: rgba(248,113,113,.35);
+  background: rgba(248,113,113,.08);
+}
 
 /* ─── TABS ──────────────────────────────────────── */
 .tabs-nav {

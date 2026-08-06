@@ -7,55 +7,21 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY)
 
-const SENHA_PADRAO = '0402'
 const FLUXO_STATUS = ['pendente', 'preparando', 'pronto', 'saiu_entrega', 'entregue']
 
 const P = {
   pedidos: [],
   tabAtiva: 'pendente',
   lojaAberta: true,
-  senhaAdmin: SENHA_PADRAO
+  midiaBuffet: null
 }
-
-/* ─── LOGIN ─────────────────────────────────────── */
-function fazerLogin() {
-  const senha = document.getElementById('login-senha').value
-  const correta = P.senhaAdmin || SENHA_PADRAO
-  if (senha === correta) {
-    sessionStorage.setItem('painel_auth', '1')
-    document.getElementById('login-screen').style.display = 'none'
-    document.getElementById('painel-app').style.display = 'flex'
-    document.getElementById('painel-app').style.flexDirection = 'column'
-    // Pede permissão de notificação no gesto do usuário (boa prática)
-    try { Notification.requestPermission().catch(() => {}) } catch (e) {}
-    iniciarPainel()
-  } else {
-    document.getElementById('login-erro').textContent = 'Senha incorreta!'
-    document.getElementById('login-senha').value = ''
-  }
-}
-
-function sair() {
-  sessionStorage.removeItem('painel_auth')
-  location.reload()
-}
-
-document.getElementById('login-senha')?.addEventListener('keydown', e => {
-  if (e.key === 'Enter') fazerLogin()
-})
 
 /* ─── INIT PAINEL ───────────────────────────────── */
 async function iniciarPainel() {
-  await carregarSenha()
   await carregarPedidos()
   await carregarLojaStatus()
+  await carregarMidiaBuffet()
   subscribeRealtime()
-}
-
-async function carregarSenha() {
-  const { data } = await sb.from('info_restaurante')
-    .select('valor').eq('chave', 'senha_admin').maybeSingle()
-  if (data) P.senhaAdmin = data.valor
 }
 
 async function carregarLojaStatus() {
@@ -410,12 +376,124 @@ function fmt(n) {
   return Number(n).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
-/* ─── AUTO-CHECK AUTH ────────────────────────────── */
-document.addEventListener('DOMContentLoaded', () => {
-  if (sessionStorage.getItem('painel_auth') === '1') {
-    document.getElementById('login-screen').style.display = 'none'
-    document.getElementById('painel-app').style.display = 'flex'
-    document.getElementById('painel-app').style.flexDirection = 'column'
-    iniciarPainel()
+/* ─── VÍDEO DO BUFFET DO DIA ─────────────────────── */
+// O agente de recompra usa este vídeo na campanha do almoço (11h–14h) e não
+// dispara sem ele. Por isso o upload fica aqui, no painel que a equipe já
+// abre todo dia, e o botão avisa quando o vídeo de hoje ainda não subiu.
+
+const BUCKET_BUFFET = 'buffet-videos'
+const TAMANHO_MAX_BUFFET = 50 * 1024 * 1024
+
+// Data no fuso do restaurante: usar UTC faria a mídia "virar o dia" às 21h.
+function hojeLocal() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric', month: '2-digit', day: '2-digit'
+  }).format(new Date())
+}
+
+async function carregarMidiaBuffet() {
+  const { data } = await sb.from('midia_do_dia')
+    .select('*').eq('data', hojeLocal()).eq('ativo', true).maybeSingle()
+  P.midiaBuffet = data || null
+  atualizarBotaoBuffet()
+}
+
+function atualizarBotaoBuffet() {
+  const btn = document.getElementById('btn-buffet')
+  if (!btn) return
+  const ok = Boolean(P.midiaBuffet)
+  btn.textContent = ok ? '🍽️ Buffet ✅' : '🍽️ Buffet ⚠️'
+  btn.classList.toggle('pendente', !ok)
+  btn.title = ok
+    ? 'Vídeo do buffet de hoje já enviado'
+    : 'Falta enviar o vídeo do buffet de hoje — a campanha não roda sem ele'
+}
+
+function abrirBuffet() {
+  const m = P.midiaBuffet
+
+  document.getElementById('modal-buffet-card').innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <h2 style="font-size:20px;font-weight:900;color:var(--amarelo)">🍽️ Buffet de hoje</h2>
+      <button class="btn-sair" onclick="fecharBuffet()">✕ Fechar</button>
+    </div>
+    <p style="font-size:13px;font-weight:600;color:${m ? '#4ADE80' : 'var(--red-2)'}">
+      ${m
+        ? 'Vídeo enviado. A campanha do almoço vai usar ele.'
+        : 'Nenhum vídeo hoje. Sem ele a campanha das 11h às 14h não dispara.'}
+    </p>
+    ${m ? `<video src="${m.video_url}" controls playsinline
+              style="width:100%;max-height:340px;border-radius:10px;background:#000"></video>` : ''}
+    <label class="btn-status" id="buffet-label"
+           style="display:block;text-align:center;cursor:pointer">
+      <span id="buffet-label-txt">${m ? '🔄 Trocar vídeo de hoje' : '📹 Enviar vídeo do buffet'}</span>
+      <input type="file" accept="video/*,image/*" capture="environment"
+             onchange="enviarBuffet(this.files[0])" style="display:none">
+    </label>
+    <p id="buffet-erro" style="font-size:12px;color:var(--red-2);font-weight:600;min-height:16px"></p>`
+
+  document.getElementById('modal-buffet').classList.add('open')
+}
+
+function fecharBuffet() {
+  document.getElementById('modal-buffet').classList.remove('open')
+}
+
+document.getElementById('modal-buffet').addEventListener('click', e => {
+  if (e.target === document.getElementById('modal-buffet')) fecharBuffet()
+})
+
+async function enviarBuffet(arquivo) {
+  if (!arquivo) return
+
+  const erro = document.getElementById('buffet-erro')
+  const txt = document.getElementById('buffet-label-txt')
+  const label = document.getElementById('buffet-label')
+  erro.textContent = ''
+
+  if (arquivo.size > TAMANHO_MAX_BUFFET) {
+    erro.textContent = `Vídeo de ${(arquivo.size / 1048576).toFixed(1)}MB passa do limite de 50MB. Grave um vídeo mais curto.`
+    return
   }
+
+  label.style.opacity = '.6'
+  txt.textContent = '⏳ Enviando...'
+
+  try {
+    const dia = hojeLocal()
+    const ext = (arquivo.name.split('.').pop() || 'mp4').toLowerCase()
+    const caminho = `${dia}/buffet-${Date.now()}.${ext}`
+
+    const up = await sb.storage.from(BUCKET_BUFFET)
+      .upload(caminho, arquivo, { contentType: arquivo.type, upsert: true })
+    if (up.error) throw up.error
+
+    const { data: pub } = sb.storage.from(BUCKET_BUFFET).getPublicUrl(caminho)
+
+    const { data, error } = await sb.from('midia_do_dia')
+      .upsert({
+        data: dia,
+        video_url: pub.publicUrl,
+        tipo: arquivo.type.startsWith('video/') ? 'video' : 'image',
+        ativo: true
+      }, { onConflict: 'data' })
+      .select().single()
+    if (error) throw error
+
+    P.midiaBuffet = data
+    atualizarBotaoBuffet()
+    abrirBuffet() // redesenha o modal já com o preview do vídeo novo
+  } catch (e) {
+    erro.textContent = e.message || 'Erro ao enviar o vídeo. Tente de novo.'
+    label.style.opacity = '1'
+    txt.textContent = '📹 Tentar de novo'
+  }
+}
+
+/* ─── START ──────────────────────────────────────── */
+// Sem tela de login: o painel é interno e abre direto.
+document.addEventListener('DOMContentLoaded', () => {
+  try { Notification.requestPermission().catch(() => {}) } catch (e) {}
+  iniciarPainel()
 })

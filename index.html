@@ -11,20 +11,8 @@
 </head>
 <body>
 
-  <!-- LOGIN SCREEN -->
-  <div class="login-screen" id="login-screen">
-    <div class="login-card">
-      <div class="login-logo">🎩</div>
-      <h1>Restaurante Chapelão</h1>
-      <p>Painel de Pedidos</p>
-      <input type="password" id="login-senha" class="input-field" placeholder="Senha de acesso" autocomplete="off">
-      <button class="btn-entrar" onclick="fazerLogin()">Entrar</button>
-      <p class="login-erro" id="login-erro"></p>
-    </div>
-  </div>
-
-  <!-- PAINEL PRINCIPAL -->
-  <div class="painel-app" id="painel-app" style="display:none">
+  <!-- PAINEL PRINCIPAL (sem login: uso interno na cozinha) -->
+  <div class="painel-app" id="painel-app" style="display:flex;flex-direction:column">
 
     <!-- HEADER -->
     <header class="painel-header">
@@ -40,8 +28,8 @@
         <div class="loja-toggle" id="loja-toggle" onclick="toggleLoja()">
           <span id="loja-toggle-label">🟢 Aberta</span>
         </div>
+        <button class="btn-buffet" id="btn-buffet" onclick="abrirBuffet()">🍽️ Buffet</button>
         <a href="/admin" class="btn-admin-link">⚙️ Admin</a>
-        <button class="btn-sair" onclick="sair()">Sair</button>
       </div>
     </header>
 
@@ -81,6 +69,13 @@
   <!-- MODAL DETALHES DO PEDIDO -->
   <div class="modal-overlay" id="modal-pedido">
     <div class="modal-card" id="modal-pedido-card">
+      <!-- populated by JS -->
+    </div>
+  </div>
+
+  <!-- MODAL VÍDEO DO BUFFET DO DIA -->
+  <div class="modal-overlay" id="modal-buffet">
+    <div class="modal-card" id="modal-buffet-card">
       <!-- populated by JS -->
     </div>
   </div>
