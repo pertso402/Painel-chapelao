@@ -29,6 +29,7 @@
           <span id="loja-toggle-label">🟢 Aberta</span>
         </div>
         <button class="btn-buffet" id="btn-buffet" onclick="abrirBuffet()">🍽️ Buffet</button>
+        <button class="btn-buffet" id="btn-cardapio" onclick="abrirCardapio()">🍲 Cardápio</button>
         <a href="/admin" class="btn-admin-link">⚙️ Admin</a>
       </div>
     </header>
@@ -76,6 +77,13 @@
   <!-- MODAL VÍDEO DO BUFFET DO DIA -->
   <div class="modal-overlay" id="modal-buffet">
     <div class="modal-card" id="modal-buffet-card">
+      <!-- populated by JS -->
+    </div>
+  </div>
+
+  <!-- MODAL CARDÁPIO DO DIA (misturas + acompanhamentos da marmitex) -->
+  <div class="modal-overlay" id="modal-cardapio">
+    <div class="modal-card" id="modal-cardapio-card">
       <!-- populated by JS -->
     </div>
   </div>

@@ -13,7 +13,8 @@ const P = {
   pedidos: [],
   tabAtiva: 'pendente',
   lojaAberta: true,
-  midiaBuffet: null
+  midiaBuffet: null,
+  cardapioHoje: false
 }
 
 /* ─── INIT PAINEL ───────────────────────────────── */
@@ -21,6 +22,7 @@ async function iniciarPainel() {
   await carregarPedidos()
   await carregarLojaStatus()
   await carregarMidiaBuffet()
+  await carregarStatusCardapio()
   subscribeRealtime()
 }
 
@@ -488,6 +490,151 @@ async function enviarBuffet(arquivo) {
     erro.textContent = e.message || 'Erro ao enviar o vídeo. Tente de novo.'
     label.style.opacity = '1'
     txt.textContent = '📹 Tentar de novo'
+  }
+}
+
+/* ─── CARDÁPIO DO DIA (marmitex: misturas + acompanhamentos) ───── */
+// O agente de atendimento lê `itens_do_dia` sempre que alguém pergunta pela
+// marmitex (tool buscar_itens_do_dia). Este modal é a forma rápida de marcar,
+// todo dia, quais das 2 misturas (carnes) e quais acompanhamentos estão de
+// pé — sem entrar na tela cheia de Porcionamento do ERP.
+//
+// Regra de negócio: até 2 carnes por dia (é "a mistura do dia", não um menu
+// inteiro de carnes). Acompanhamento não tem esse limite — normalmente todos
+// os cadastrados ficam disponíveis, mas dá pra tirar o que faltou.
+const MAX_CARNES_DIA = 2
+
+// inventory_items/itens_do_dia usam o RBAC do ERP (exige usuário autenticado
+// com permissão de porcionamento) — a chave anon deste painel não passa por
+// ali. Por isso o acesso é só via estas funções RPC de escopo estreito
+// (cardapio_dia_*), que não expõem custo de estoque nem outras colunas.
+async function buscarItensPorcionaveis() {
+  const { data, error } = await sb.rpc('cardapio_dia_listar_itens')
+  if (error) throw error
+  return {
+    carnes: (data || []).filter(i => i.porc_categoria === 'carne'),
+    acompanhamentos: (data || []).filter(i => i.porc_categoria === 'acompanhamento')
+  }
+}
+
+async function carregarStatusCardapio() {
+  const { data, error } = await sb.rpc('cardapio_dia_status_hoje')
+  if (error) { console.error(error); return }
+  P.cardapioHoje = Boolean(data)
+  atualizarBotaoCardapio()
+}
+
+function atualizarBotaoCardapio() {
+  const btn = document.getElementById('btn-cardapio')
+  if (!btn) return
+  btn.textContent = P.cardapioHoje ? '🍲 Cardápio ✅' : '🍲 Cardápio ⚠️'
+  btn.classList.toggle('pendente', !P.cardapioHoje)
+  btn.title = P.cardapioHoje
+    ? 'Cardápio de hoje já configurado'
+    : 'Marque as misturas e acompanhamentos de hoje — some à meia-noite'
+}
+
+async function abrirCardapio() {
+  const card = document.getElementById('modal-cardapio-card')
+  card.innerHTML = `<p style="text-align:center;padding:20px;color:var(--text-muted)">Carregando cardápio...</p>`
+  document.getElementById('modal-cardapio').classList.add('open')
+
+  let carnes, acompanhamentos, ativosHoje
+  try {
+    const r = await buscarItensPorcionaveis()
+    carnes = r.carnes
+    acompanhamentos = r.acompanhamentos
+
+    const { data } = await sb.rpc('cardapio_dia_ativos_hoje')
+    ativosHoje = new Set((data || []).filter(r => r.ativo).map(r => r.inventory_item_id))
+  } catch (e) {
+    card.innerHTML = `<p style="text-align:center;padding:20px;color:var(--red-2)">Erro ao carregar: ${e.message}</p>`
+    return
+  }
+
+  const linhaItem = (item, marcado) => `
+    <label style="display:flex;align-items:center;gap:8px;padding:8px 4px;font-size:13.5px;cursor:pointer">
+      <input type="checkbox" class="chk-cardapio" data-categoria="${item.porc_categoria}"
+             value="${item.id}" ${marcado ? 'checked' : ''}>
+      <span>${item.nome}</span>
+    </label>`
+
+  card.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <h2 style="font-size:20px;font-weight:900;color:var(--amarelo)">🍲 Cardápio de hoje</h2>
+      <button class="btn-sair" onclick="fecharCardapio()">✕ Fechar</button>
+    </div>
+    <p style="font-size:12px;color:var(--text-muted)">
+      Vale só pra hoje — some à meia-noite e precisa marcar de novo amanhã.
+    </p>
+
+    <div>
+      <h3 style="font-size:13px;font-weight:800;color:var(--text);margin-bottom:2px">
+        🥩 Misturas (carnes) — escolha até ${MAX_CARNES_DIA}
+      </h3>
+      <div id="cardapio-carnes" style="display:flex;flex-direction:column">
+        ${carnes.map(c => linhaItem(c, ativosHoje.has(c.id))).join('') || '<p style="font-size:12px;color:var(--text-muted)">Nenhuma carne porcionável cadastrada.</p>'}
+      </div>
+    </div>
+
+    <div>
+      <h3 style="font-size:13px;font-weight:800;color:var(--text);margin:10px 0 2px">🍟 Acompanhamentos</h3>
+      <div id="cardapio-acomp" style="display:flex;flex-direction:column">
+        ${acompanhamentos.map(a => linhaItem(a, ativosHoje.has(a.id))).join('') || '<p style="font-size:12px;color:var(--text-muted)">Nenhum acompanhamento cadastrado.</p>'}
+      </div>
+    </div>
+
+    <p id="cardapio-erro" style="font-size:12px;color:var(--red-2);font-weight:600;min-height:16px;margin-top:8px"></p>
+    <button class="btn-status" id="btn-salvar-cardapio" onclick="salvarCardapio()"
+            style="width:100%;text-align:center;cursor:pointer">💾 Salvar cardápio de hoje</button>`
+
+  // Trava de até 2 carnes: desmarcar sempre liberado; marcar a 3ª é bloqueado
+  // na hora, em vez de deixar salvar e só reclamar depois.
+  document.querySelectorAll('#cardapio-carnes .chk-cardapio').forEach(chk => {
+    chk.addEventListener('change', () => {
+      const marcadas = document.querySelectorAll('#cardapio-carnes .chk-cardapio:checked')
+      if (marcadas.length > MAX_CARNES_DIA) {
+        chk.checked = false
+        document.getElementById('cardapio-erro').textContent = `Máximo de ${MAX_CARNES_DIA} misturas por dia — desmarque uma antes de escolher outra.`
+      } else {
+        document.getElementById('cardapio-erro').textContent = ''
+      }
+    })
+  })
+}
+
+function fecharCardapio() {
+  document.getElementById('modal-cardapio').classList.remove('open')
+}
+
+document.getElementById('modal-cardapio').addEventListener('click', e => {
+  if (e.target === document.getElementById('modal-cardapio')) fecharCardapio()
+})
+
+async function salvarCardapio() {
+  const btn = document.getElementById('btn-salvar-cardapio')
+  const erro = document.getElementById('cardapio-erro')
+  const marcados = [...document.querySelectorAll('.chk-cardapio:checked')].map(c => c.value)
+
+  btn.disabled = true
+  btn.textContent = '⏳ Salvando...'
+  erro.textContent = ''
+
+  try {
+    // cardapio_dia_salvar grava TODO item porcionável (marcado vira ativo,
+    // o resto vira inativo) e confere de novo o limite de 2 carnes no banco
+    // — a trava do checkbox no navegador é só conveniência, não segurança.
+    const { error } = await sb.rpc('cardapio_dia_salvar', { p_ids_ativos: marcados })
+    if (error) throw error
+
+    P.cardapioHoje = marcados.length > 0
+    atualizarBotaoCardapio()
+    fecharCardapio()
+  } catch (e) {
+    erro.textContent = e.message || 'Erro ao salvar. Tente de novo.'
+  } finally {
+    btn.disabled = false
+    btn.textContent = '💾 Salvar cardápio de hoje'
   }
 }
 
