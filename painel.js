@@ -313,6 +313,11 @@ function abrirWhatsApp(tel) {
 }
 
 /* ─── IMPRIMIR ──────────────────────────────────── */
+// Largura do rolo da impressora térmica. 80mm é o mais comum em impressoras
+// de restaurante (Elgin i9, Bematech, Epson TM-T20); troque pra '58mm' aqui
+// se a impressora da cozinha for a bobina estreita.
+const LARGURA_PAPEL_TERMICO = '80mm'
+
 function imprimirPedido(id) {
   const p = P.pedidos.find(x => x.id === id)
   if (!p) return
@@ -321,24 +326,43 @@ function imprimirPedido(id) {
   const itens = p.itens_pedido || []
   const taxa = parseFloat(p.taxa_entrega || 0)
 
+  // Sem emoji no conteúdo impresso: impressoras térmicas com driver ESC/POS
+  // simples (texto cru, sem GDI/rasterização) costumam não ter esses
+  // glifos e imprimem caractere quebrado ou nada no lugar. Emoji continua
+  // só na tela (abrirDetalhes), nunca no que sai no papel.
   const win = window.open('', '_blank', 'width=400,height=600')
   win.document.write(`
     <html><head><title>Pedido #${p.numero_pedido}</title>
     <style>
-      body { font-family: monospace; font-size: 13px; padding: 16px; }
-      h2 { text-align: center; font-size: 16px; }
-      hr { margin: 8px 0; }
-      .row { display: flex; justify-content: space-between; }
-      .total { font-size: 15px; font-weight: bold; }
+      /* @page controla o tamanho da PÁGINA que o navegador manda pro driver
+         de impressão — sem isso ele assume A4/Carta e a impressora térmica
+         corta ou sobra papel em branco. 'auto' na altura deixa o rolo
+         continuar até o conteúdo acabar, em vez de forçar altura fixa. */
+      @page { size: ${LARGURA_PAPEL_TERMICO} auto; margin: 0; }
+      * { box-sizing: border-box; }
+      body {
+        font-family: 'Courier New', monospace;
+        font-size: 12px;
+        line-height: 1.4;
+        width: ${LARGURA_PAPEL_TERMICO};
+        margin: 0;
+        padding: 6px 8px;
+      }
+      h2 { text-align: center; font-size: 14px; margin: 4px 0; }
+      p { margin: 3px 0; word-wrap: break-word; }
+      hr { border: none; border-top: 1px dashed #000; margin: 6px 0; }
+      .row { display: flex; justify-content: space-between; gap: 6px; }
+      .row span:first-child { word-break: break-word; }
+      .total { font-size: 14px; font-weight: bold; }
     </style></head><body>
-    <h2>🎩 RESTAURANTE CHAPELÃO</h2>
+    <h2>RESTAURANTE CHAPELAO</h2>
     <p style="text-align:center">Pedido #${p.numero_pedido}</p>
     <hr>
-    <p><b>Cliente:</b> ${cliente?.nome || '—'}</p>
-    <p><b>Tel:</b> ${cliente?.telefone || '—'}</p>
+    <p><b>Cliente:</b> ${cliente?.nome || '-'}</p>
+    <p><b>Tel:</b> ${cliente?.telefone || '-'}</p>
     <p><b>Entrega:</b> ${p.tipo_entrega === 'delivery' ? 'Delivery' : 'Retirada'}</p>
     ${p.endereco_entrega ? `<p><b>End:</b> ${p.endereco_entrega}</p>` : ''}
-    <p><b>Pgto:</b> ${p.forma_pagamento || '—'}</p>
+    <p><b>Pgto:</b> ${p.forma_pagamento || '-'}</p>
     ${p.observacao ? `<p><b>Obs:</b> ${p.observacao}</p>` : ''}
     <hr>
     ${itens.map(i => `<div class="row"><span>${i.quantidade}x ${i.nome_produto}</span><span>R$ ${fmt(i.total)}</span></div>`).join('')}
@@ -346,7 +370,7 @@ function imprimirPedido(id) {
     ${taxa > 0 ? `<div class="row"><span>Taxa</span><span>R$ ${fmt(taxa)}</span></div>` : ''}
     <div class="row total"><span>TOTAL</span><span>R$ ${fmt(p.total)}</span></div>
     <hr>
-    <p style="text-align:center;font-size:11px">${new Date(p.created_at).toLocaleString('pt-BR')}</p>
+    <p style="text-align:center;font-size:10px">${new Date(p.created_at).toLocaleString('pt-BR')}</p>
     <script>window.onload=()=>{window.print();window.close()}<\/script>
     </body></html>`)
   win.document.close()
@@ -534,7 +558,10 @@ function atualizarBotaoCardapio() {
     : 'Marque as misturas e acompanhamentos de hoje — some à meia-noite'
 }
 
-async function abrirCardapio() {
+// preSelecao: quando informado (Set de ids), sobrepõe o estado salvo no
+// banco — usado ao reabrir o modal depois de editar/excluir/adicionar item,
+// pra não perder marcações que a pessoa já tinha feito e ainda não salvou.
+async function abrirCardapio(preSelecao) {
   const card = document.getElementById('modal-cardapio-card')
   card.innerHTML = `<p style="text-align:center;padding:20px;color:var(--text-muted)">Carregando cardápio...</p>`
   document.getElementById('modal-cardapio').classList.add('open')
@@ -545,19 +572,37 @@ async function abrirCardapio() {
     carnes = r.carnes
     acompanhamentos = r.acompanhamentos
 
-    const { data } = await sb.rpc('cardapio_dia_ativos_hoje')
-    ativosHoje = new Set((data || []).filter(r => r.ativo).map(r => r.inventory_item_id))
+    if (preSelecao) {
+      ativosHoje = preSelecao
+    } else {
+      const { data } = await sb.rpc('cardapio_dia_ativos_hoje')
+      ativosHoje = new Set((data || []).filter(r => r.ativo).map(r => r.inventory_item_id))
+    }
   } catch (e) {
     card.innerHTML = `<p style="text-align:center;padding:20px;color:var(--red-2)">Erro ao carregar: ${e.message}</p>`
     return
   }
 
   const linhaItem = (item, marcado) => `
-    <label style="display:flex;align-items:center;gap:8px;padding:8px 4px;font-size:13.5px;cursor:pointer">
-      <input type="checkbox" class="chk-cardapio" data-categoria="${item.porc_categoria}"
-             value="${item.id}" ${marcado ? 'checked' : ''}>
-      <span>${item.nome}</span>
-    </label>`
+    <div style="display:flex;align-items:center;gap:6px;padding:6px 4px;font-size:13.5px">
+      <label style="display:flex;align-items:center;gap:8px;flex:1;cursor:pointer;min-width:0">
+        <input type="checkbox" class="chk-cardapio" data-categoria="${item.porc_categoria}"
+               value="${item.id}" ${marcado ? 'checked' : ''}>
+        <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${item.nome}</span>
+      </label>
+      <button onclick="editarItemCardapio('${item.id}','${item.nome.replace(/'/g, "\\'")}')"
+              title="Editar nome" style="background:none;border:none;cursor:pointer;font-size:14px;padding:4px">✏️</button>
+      <button onclick="excluirItemCardapio('${item.id}','${item.nome.replace(/'/g, "\\'")}')"
+              title="Remover do cardápio" style="background:none;border:none;cursor:pointer;font-size:14px;padding:4px">🗑️</button>
+    </div>`
+
+  const linhaAdicionar = (categoria) => `
+    <div style="display:flex;gap:6px;margin-top:6px">
+      <input type="text" id="novo-item-${categoria}" placeholder="Nome do item novo..."
+             style="flex:1;padding:7px 9px;border-radius:8px;border:1px solid var(--border);background:var(--bg-card2);color:var(--text);font-size:13px">
+      <button onclick="adicionarItemCardapio('${categoria}')"
+              style="padding:7px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);cursor:pointer;font-size:13px">+ Add</button>
+    </div>`
 
   card.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center">
@@ -565,7 +610,7 @@ async function abrirCardapio() {
       <button class="btn-sair" onclick="fecharCardapio()">✕ Fechar</button>
     </div>
     <p style="font-size:12px;color:var(--text-muted)">
-      Vale só pra hoje — some à meia-noite e precisa marcar de novo amanhã.
+      A seleção vale só pra hoje — some à meia-noite. Itens novos (✏️/🗑️/+ Add) ficam salvos pro cardápio.
     </p>
 
     <div>
@@ -573,15 +618,17 @@ async function abrirCardapio() {
         🥩 Misturas (carnes) — escolha até ${MAX_CARNES_DIA}
       </h3>
       <div id="cardapio-carnes" style="display:flex;flex-direction:column">
-        ${carnes.map(c => linhaItem(c, ativosHoje.has(c.id))).join('') || '<p style="font-size:12px;color:var(--text-muted)">Nenhuma carne porcionável cadastrada.</p>'}
+        ${carnes.map(c => linhaItem(c, ativosHoje.has(c.id))).join('') || '<p style="font-size:12px;color:var(--text-muted)">Nenhuma carne cadastrada.</p>'}
       </div>
+      ${linhaAdicionar('carne')}
     </div>
 
     <div>
-      <h3 style="font-size:13px;font-weight:800;color:var(--text);margin:10px 0 2px">🍟 Acompanhamentos</h3>
+      <h3 style="font-size:13px;font-weight:800;color:var(--text);margin:12px 0 2px">🍟 Acompanhamentos</h3>
       <div id="cardapio-acomp" style="display:flex;flex-direction:column">
         ${acompanhamentos.map(a => linhaItem(a, ativosHoje.has(a.id))).join('') || '<p style="font-size:12px;color:var(--text-muted)">Nenhum acompanhamento cadastrado.</p>'}
       </div>
+      ${linhaAdicionar('acompanhamento')}
     </div>
 
     <p id="cardapio-erro" style="font-size:12px;color:var(--red-2);font-weight:600;min-height:16px;margin-top:8px"></p>
@@ -636,6 +683,56 @@ async function salvarCardapio() {
     btn.disabled = false
     btn.textContent = '💾 Salvar cardápio de hoje'
   }
+}
+
+function capturarSelecaoCardapio() {
+  return new Set([...document.querySelectorAll('.chk-cardapio:checked')].map(c => c.value))
+}
+
+async function editarItemCardapio(id, nomeAtual) {
+  const novoNome = prompt('Novo nome do item:', nomeAtual)
+  if (!novoNome || !novoNome.trim() || novoNome.trim() === nomeAtual) return
+
+  const selecao = capturarSelecaoCardapio()
+  try {
+    const { error } = await sb.rpc('cardapio_dia_renomear_item', { p_id: id, p_novo_nome: novoNome.trim() })
+    if (error) throw error
+  } catch (e) {
+    alert('Erro ao renomear: ' + e.message)
+  }
+  abrirCardapio(selecao)
+}
+
+async function excluirItemCardapio(id, nome) {
+  const ok = confirm(`Remover "${nome}" do cardápio?\n\nEle deixa de aparecer como opção pra escolher — não some do histórico de dias já registrados.`)
+  if (!ok) return
+
+  const selecao = capturarSelecaoCardapio()
+  selecao.delete(id) // item removido não pode continuar "selecionado" na tela
+  try {
+    const { error } = await sb.rpc('cardapio_dia_excluir_item', { p_id: id })
+    if (error) throw error
+  } catch (e) {
+    alert('Erro ao remover: ' + e.message)
+  }
+  abrirCardapio(selecao)
+}
+
+async function adicionarItemCardapio(categoria) {
+  const input = document.getElementById(`novo-item-${categoria}`)
+  const nome = input.value.trim()
+  if (!nome) { input.focus(); return }
+
+  const selecao = capturarSelecaoCardapio()
+  try {
+    const { error } = await sb.rpc('cardapio_dia_criar_item', { p_nome: nome, p_categoria: categoria })
+    if (error) throw error
+  } catch (e) {
+    alert('Erro ao adicionar: ' + e.message)
+    abrirCardapio(selecao)
+    return
+  }
+  abrirCardapio(selecao)
 }
 
 /* ─── START ──────────────────────────────────────── */
