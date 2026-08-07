@@ -45,10 +45,10 @@ async function carregarPedidos() {
     .from('pedidos')
     .select(`
       id, numero_pedido, status, tipo_entrega, endereco_entrega,
-      forma_pagamento, subtotal, taxa_entrega, total, observacao,
+      forma_pagamento, troco_para, subtotal, taxa_entrega, desconto, total, observacao,
       created_at, updated_at,
       clientes ( id, nome, telefone ),
-      itens_pedido ( nome_produto, quantidade, preco_unitario, total )
+      itens_pedido ( nome_produto, quantidade, preco_unitario, total, observacao )
     `)
     .gte('created_at', desde)
     .order('created_at', { ascending: false })
@@ -182,8 +182,14 @@ function cardPedido(p) {
 
   const acoes = botoesAcao(p)
 
+  // Dinheiro é o único caso em que o entregador precisa sair com troco no
+  // bolso. Fica em destaque no card pra ninguém descobrir na porta do cliente.
+  const troco = (pgto === 'dinheiro' && Number(p.troco_para) > 0)
+    ? `<div class="pc-troco">💵 Troco para R$ ${fmt(p.troco_para)} · levar R$ ${fmt(Number(p.troco_para) - Number(p.total))}</div>`
+    : (pgto === 'dinheiro' ? `<div class="pc-troco">💵 Dinheiro · sem troco anotado</div>` : '')
+
   return `
-    <div class="pedido-card ${cls}" onclick="abrirDetalhes('${p.id}')">
+    <div class="pedido-card ${cls}" data-pedido-id="${p.id}" onclick="abrirDetalhes('${p.id}')">
       <div class="pc-header">
         <span class="pc-numero">#${p.numero_pedido}</span>
         <span class="pc-tempo${urgente}">⏱ ${tempo}</span>
@@ -194,6 +200,7 @@ function cardPedido(p) {
         <span class="pc-badge ${tipo === 'delivery' ? 'delivery' : ''}">${tipo === 'delivery' ? '🛵 Delivery' : '🏃 Retirada'}</span>
         <span class="pc-badge ${pgto === 'pix' ? 'pix' : ''}">${pgtoLabel(pgto)}</span>
       </div>
+      ${troco}
       <div class="pc-itens">${itensTexto || '—'}</div>
       <div class="pc-total">R$ ${fmt(p.total)}</div>
       <div class="pc-actions" onclick="event.stopPropagation()">
@@ -261,9 +268,52 @@ function botoesAcao(p) {
 }
 
 /* ─── MUDAR STATUS ──────────────────────────────── */
+// Antes esta função ignorava o retorno do Supabase por completo. Quando o
+// UPDATE falhava (era o caso: um trigger de notificação abortava a transação),
+// a tela simplesmente recarregava e o pedido continuava onde estava — sem
+// erro, sem aviso, sem nada. A pessoa clicava "Confirmar" de novo achando que
+// não tinha pegado o clique.
+//
+// Agora: `.select()` faz o UPDATE devolver as linhas afetadas. Zero linha =
+// falhou, e isso vira um aviso na tela em vez de silêncio.
 async function mudarStatus(id, novoStatus) {
-  await sb.from('pedidos').update({ status: novoStatus, updated_at: new Date().toISOString() }).eq('id', id)
-  await carregarPedidos()
+  const botoes = document.querySelectorAll(`[data-pedido-id="${id}"] .btn-status`)
+  botoes.forEach(b => { b.disabled = true; b.style.opacity = '.5' })
+
+  try {
+    const { data, error } = await sb
+      .from('pedidos')
+      .update({ status: novoStatus, updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select('id, status')
+
+    if (error) throw error
+    if (!data || !data.length) {
+      throw new Error('O banco não confirmou a alteração (nenhuma linha atualizada).')
+    }
+
+    await carregarPedidos()
+  } catch (e) {
+    console.error('Falha ao mudar status', e)
+    avisar(`❌ Não consegui mudar o pedido para "${statusLabel(novoStatus)}".\n\n${e.message || e}\n\nTente de novo. Se continuar, avise o suporte.`, 'erro')
+    botoes.forEach(b => { b.disabled = false; b.style.opacity = '1' })
+  }
+}
+
+/* Aviso visual não-bloqueante (o alert() nativo trava a cozinha inteira até
+   alguém clicar OK). Some sozinho, mas fica 8s se for erro. */
+function avisar(msg, tipo = 'ok') {
+  let el = document.getElementById('toast-painel')
+  if (!el) {
+    el = document.createElement('div')
+    el.id = 'toast-painel'
+    document.body.appendChild(el)
+  }
+  el.className = `toast-painel ${tipo}`
+  el.textContent = msg
+  el.style.display = 'block'
+  clearTimeout(el._timer)
+  el._timer = setTimeout(() => { el.style.display = 'none' }, tipo === 'erro' ? 8000 : 3500)
 }
 
 /* ─── ALERTAS DE ATENDIMENTO HUMANO ─────────────── */
@@ -380,9 +430,12 @@ function abrirDetalhes(id) {
     </div>
     <div style="background:var(--bg-card2);border-radius:10px;padding:14px;display:flex;flex-direction:column;gap:8px">
       ${itens.map(i => `
-        <div style="display:flex;justify-content:space-between;font-size:13px">
-          <span>${i.quantidade}x ${i.nome_produto}</span>
-          <span style="color:var(--amarelo);font-weight:700">R$ ${fmt(i.total)}</span>
+        <div>
+          <div style="display:flex;justify-content:space-between;font-size:13px">
+            <span>${i.quantidade}x ${i.nome_produto}</span>
+            <span style="color:var(--amarelo);font-weight:700">R$ ${fmt(i.total)}</span>
+          </div>
+          ${i.observacao ? `<div style="font-size:11.5px;color:var(--text-muted);padding-left:12px;margin-top:2px">↳ ${i.observacao}</div>` : ''}
         </div>`).join('')}
       <div style="border-top:1px solid var(--border);padding-top:8px;margin-top:4px;display:flex;flex-direction:column;gap:4px">
         ${taxa > 0 ? `<div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text-muted)"><span>Taxa</span><span>R$ ${fmt(taxa)}</span></div>` : ''}
@@ -431,6 +484,28 @@ function imprimirPedido(id) {
   // simples (texto cru, sem GDI/rasterização) costumam não ter esses
   // glifos e imprimem caractere quebrado ou nada no lugar. Emoji continua
   // só na tela (abrirDetalhes), nunca no que sai no papel.
+  // Pagamento é a informação que mais gera problema na porta do cliente, então
+  // sai num quadro próprio, em corpo grande — não numa linha perdida no meio.
+  // Em dinheiro, o troco a levar já vem CALCULADO: ninguém faz conta de
+  // cabeça segurando marmita.
+  const pgto = (p.forma_pagamento || '').toLowerCase()
+  const rotuloPgto = pgto === 'pix' ? 'PIX' : pgto === 'dinheiro' ? 'DINHEIRO' : pgto === 'cartao' ? 'CARTAO' : (p.forma_pagamento || '-').toUpperCase()
+  const trocoPara = Number(p.troco_para || 0)
+  const levarTroco = trocoPara > 0 ? trocoPara - Number(p.total) : 0
+
+  let blocoPagamento = `<div class="pgto-box"><div class="pgto-tipo">PAGAMENTO: ${rotuloPgto}</div>`
+  if (pgto === 'dinheiro') {
+    blocoPagamento += trocoPara > 0
+      ? `<div class="pgto-linha">Cliente paga com: R$ ${fmt(trocoPara)}</div>
+         <div class="pgto-troco">LEVAR TROCO: R$ ${fmt(levarTroco)}</div>`
+      : `<div class="pgto-troco">SEM TROCO ANOTADO — CONFIRMAR</div>`
+  } else if (pgto === 'pix') {
+    blocoPagamento += `<div class="pgto-linha">PIX ja confirmado no atendimento</div>`
+  } else if (pgto === 'cartao') {
+    blocoPagamento += `<div class="pgto-linha">Levar maquininha</div>`
+  }
+  blocoPagamento += `</div>`
+
   const win = window.open('', '_blank', 'width=400,height=600')
   win.document.write(`
     <html><head><title>Pedido #${p.numero_pedido}</title>
@@ -455,22 +530,36 @@ function imprimirPedido(id) {
       .row { display: flex; justify-content: space-between; gap: 6px; }
       .row span:first-child { word-break: break-word; }
       .total { font-size: 14px; font-weight: bold; }
+      .obs-item { font-size: 11px; padding-left: 10px; font-style: italic; }
+      .entrega { text-align: center; font-size: 13px; font-weight: bold;
+                 border: 1px solid #000; padding: 2px; margin: 4px 0; }
+      /* Quadro de pagamento: borda grossa e corpo maior porque é o campo que
+         o entregador precisa achar de relance. */
+      .pgto-box { border: 2px solid #000; padding: 5px; margin: 6px 0; text-align: center; }
+      .pgto-tipo { font-size: 16px; font-weight: bold; }
+      .pgto-linha { font-size: 11px; margin-top: 2px; }
+      .pgto-troco { font-size: 15px; font-weight: bold; margin-top: 3px;
+                    border-top: 1px dashed #000; padding-top: 3px; }
     </style></head><body>
     <h2>RESTAURANTE CHAPELAO</h2>
     <p style="text-align:center">Pedido #${p.numero_pedido}</p>
+    <div class="entrega">${p.tipo_entrega === 'delivery' ? '** ENTREGA **' : '** RETIRADA **'}</div>
     <hr>
     <p><b>Cliente:</b> ${cliente?.nome || '-'}</p>
     <p><b>Tel:</b> ${cliente?.telefone || '-'}</p>
-    <p><b>Entrega:</b> ${p.tipo_entrega === 'delivery' ? 'Delivery' : 'Retirada'}</p>
     ${p.endereco_entrega ? `<p><b>End:</b> ${p.endereco_entrega}</p>` : ''}
-    <p><b>Pgto:</b> ${p.forma_pagamento || '-'}</p>
     ${p.observacao ? `<p><b>Obs:</b> ${p.observacao}</p>` : ''}
     <hr>
-    ${itens.map(i => `<div class="row"><span>${i.quantidade}x ${i.nome_produto}</span><span>R$ ${fmt(i.total)}</span></div>`).join('')}
+    ${itens.map(i => `
+      <div class="row"><span>${i.quantidade}x ${i.nome_produto}</span><span>R$ ${fmt(i.total)}</span></div>
+      ${i.observacao ? `<div class="obs-item">> ${i.observacao}</div>` : ''}
+    `).join('')}
     <hr>
-    ${taxa > 0 ? `<div class="row"><span>Taxa</span><span>R$ ${fmt(taxa)}</span></div>` : ''}
+    ${Number(p.subtotal) ? `<div class="row"><span>Subtotal</span><span>R$ ${fmt(p.subtotal)}</span></div>` : ''}
+    ${taxa > 0 ? `<div class="row"><span>Taxa de entrega</span><span>R$ ${fmt(taxa)}</span></div>` : ''}
+    ${Number(p.desconto) > 0 ? `<div class="row"><span>Desconto</span><span>-R$ ${fmt(p.desconto)}</span></div>` : ''}
     <div class="row total"><span>TOTAL</span><span>R$ ${fmt(p.total)}</span></div>
-    <hr>
+    ${blocoPagamento}
     <p style="text-align:center;font-size:10px">${new Date(p.created_at).toLocaleString('pt-BR')}</p>
     <script>window.onload=()=>{window.print();window.close()}<\/script>
     </body></html>`)
@@ -830,13 +919,64 @@ async function adicionarItemCardapio(categoria) {
 // aplicado por painel_criar_pedido — a mesma trava de "só os itens
 // permitidos" do agente de atendimento vale aqui também, no servidor,
 // não só na tela.
+//
+// A versão anterior jogava os 138 produtos num único <select> com optgroups.
+// Achar "Coca-Cola Lata 350ml" no meio de 51 bebidas dentro de um dropdown,
+// com o telefone tocando, era o gargalo. Agora: categorias em abas na ordem
+// de uso real (marmitex primeiro, bebidas e doces por último), busca que
+// filtra tudo de uma vez, e grade de botões grandes o bastante pra tocar no
+// tablet da cozinha.
+
 const NP = {
-  produtos: [], itens: [], cupom: null, clienteId: null,
-  // Campos do formulário ficam aqui, não só no DOM — renderNovoPedido()
-  // redesenha o modal inteiro toda vez que um item é adicionado/removido
-  // (mais simples que atualizar só a listinha), e sem isso os campos já
-  // preenchidos (telefone, nome...) eram apagados a cada "+ Add".
-  form: { telefone: '', nome: '', endereco: '', tipoEntrega: 'delivery', pagamento: 'pix', observacao: '', aplicarCupom: true }
+  produtos: [],
+  itens: [],
+  cupom: null,
+  clienteId: null,
+  categoriaAtiva: null,
+  busca: '',
+  // Cardápio do dia (carnes/acompanhamentos ativos hoje), carregado sob
+  // demanda na primeira marmitex do pedido.
+  cardapio: null,
+  // Marmitex sendo montada agora (null = nenhuma). Fica fora de NP.itens
+  // porque só entra no pedido depois de confirmar as escolhas.
+  montando: null,
+  form: { telefone: '', nome: '', endereco: '', tipoEntrega: 'delivery', pagamento: 'pix', trocoPara: '', observacao: '', aplicarCupom: true }
+}
+
+// Ordem em que as categorias aparecem. Pedida assim: marmitas bem em cima,
+// bebidas embaixo e depois os doces. O que não estiver mapeado cai no meio,
+// antes das bebidas.
+const NP_ORDEM_CATEGORIAS = [
+  'Marmitex', 'Refeições', 'Esfirras', 'Outros', 'Bebidas', 'Sorvetes', 'Doces'
+]
+const NP_ICONE_CATEGORIA = {
+  'Marmitex': '🍱', 'Refeições': '🍛', 'Esfirras': '🥟', 'Outros': '🍟',
+  'Bebidas': '🥤', 'Sorvetes': '🍦', 'Doces': '🍬'
+}
+
+// Limites da marmitex — os mesmos que o agente de atendimento aplica no
+// WhatsApp. Se mudar lá, muda aqui.
+const NP_MAX_CARNES = 2
+const NP_MAX_ACOMP = 6
+
+function npOrdemCategoria(cat) {
+  const i = NP_ORDEM_CATEGORIAS.indexOf(cat)
+  return i === -1 ? NP_ORDEM_CATEGORIAS.indexOf('Outros') : i
+}
+
+function npCategorias() {
+  const cats = [...new Set(NP.produtos.map(p => (p.categoria || 'Outros').trim()))]
+  return cats.sort((a, b) => npOrdemCategoria(a) - npOrdemCategoria(b) || a.localeCompare(b))
+}
+
+function ehMarmitex(produto) {
+  return (produto.categoria || '').trim().toLowerCase() === 'marmitex'
+}
+
+// Normaliza pra busca: sem acento, minúsculo. Assim "acai" acha "Açaí" e
+// "marmitex media" acha "Marmitex Média".
+function npNorm(s) {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/\p{Diacritic}/gu, '').trim()
 }
 
 // Lê os valores atuais da tela pro estado, ANTES de um re-render que vai
@@ -848,7 +988,9 @@ function npCapturarForm() {
   NP.form.endereco = val('np-endereco') ?? NP.form.endereco
   NP.form.tipoEntrega = val('np-tipo-entrega') ?? NP.form.tipoEntrega
   NP.form.pagamento = val('np-pagamento') ?? NP.form.pagamento
+  NP.form.trocoPara = val('np-troco') ?? NP.form.trocoPara
   NP.form.observacao = val('np-observacao') ?? NP.form.observacao
+  NP.busca = val('np-busca') ?? NP.busca
   const chk = document.getElementById('np-aplicar-cupom')
   if (chk) NP.form.aplicarCupom = chk.checked
 }
@@ -861,7 +1003,9 @@ async function abrirNovoPedido() {
   NP.itens = []
   NP.cupom = null
   NP.clienteId = null
-  NP.form = { telefone: '', nome: '', endereco: '', tipoEntrega: 'delivery', pagamento: 'pix', observacao: '', aplicarCupom: true }
+  NP.montando = null
+  NP.busca = ''
+  NP.form = { telefone: '', nome: '', endereco: '', tipoEntrega: 'delivery', pagamento: 'pix', trocoPara: '', observacao: '', aplicarCupom: true }
 
   if (!NP.produtos.length) {
     const { data, error } = await sb.from('produtos')
@@ -875,6 +1019,7 @@ async function abrirNovoPedido() {
     NP.produtos = data || []
   }
 
+  NP.categoriaAtiva = npCategorias()[0] || null
   renderNovoPedido()
 }
 
@@ -882,91 +1027,405 @@ function precoProduto(p) {
   return Number(p.preco_promocional ?? p.preco_delivery ?? p.preco)
 }
 
+/* ─── CARDÁPIO DO DIA (carnes e acompanhamentos da marmitex) ─────── */
+// Mesma fonte que o agente usa no WhatsApp: só entra na marmitex o que a
+// cozinha marcou como ativo HOJE. Antes não havia como escolher isso no
+// painel — o pedido manual saía sem mistura e a cozinha tinha que adivinhar.
+async function npCarregarCardapioDia() {
+  if (NP.cardapio) return NP.cardapio
+
+  const [itens, ativos] = await Promise.all([
+    sb.rpc('cardapio_dia_listar_itens'),
+    sb.rpc('cardapio_dia_ativos_hoje')
+  ])
+  if (itens.error) throw itens.error
+  if (ativos.error) throw ativos.error
+
+  const ativosHoje = new Set((ativos.data || []).filter(r => r.ativo).map(r => r.inventory_item_id))
+  const listaAtiva = (itens.data || []).filter(i => ativosHoje.has(i.id))
+
+  NP.cardapio = {
+    carnes: listaAtiva.filter(i => i.porc_categoria === 'carne').map(i => i.nome),
+    acompanhamentos: listaAtiva.filter(i => i.porc_categoria !== 'carne').map(i => i.nome)
+  }
+  return NP.cardapio
+}
+
+/* ─── MONTAGEM DA MARMITEX ───────────────────────── */
+
+async function npIniciarMarmitex(produtoId) {
+  npCapturarForm()
+  const produto = NP.produtos.find(p => p.id === produtoId)
+  if (!produto) return
+
+  NP.montando = { produto, carnes: [], acompanhamentos: [], erro: '', carregando: true }
+  renderNovoPedido()
+
+  try {
+    await npCarregarCardapioDia()
+    NP.montando.carregando = false
+  } catch (e) {
+    NP.montando.carregando = false
+    NP.montando.erro = `Não consegui carregar o cardápio de hoje: ${e.message}`
+  }
+  renderNovoPedido()
+}
+
+function npToggleMistura(tipo, nome) {
+  const m = NP.montando
+  if (!m) return
+  const lista = tipo === 'carne' ? m.carnes : m.acompanhamentos
+  const max = tipo === 'carne' ? NP_MAX_CARNES : NP_MAX_ACOMP
+  const idx = lista.indexOf(nome)
+
+  if (idx >= 0) {
+    lista.splice(idx, 1)
+    m.erro = ''
+  } else if (lista.length >= max) {
+    m.erro = tipo === 'carne'
+      ? `Máximo de ${NP_MAX_CARNES} carnes. Desmarque uma pra trocar.`
+      : `Máximo de ${NP_MAX_ACOMP} acompanhamentos. Desmarque um pra trocar.`
+  } else {
+    lista.push(nome)
+    m.erro = ''
+  }
+  renderNovoPedido()
+}
+
+function npCancelarMarmitex() {
+  NP.montando = null
+  renderNovoPedido()
+}
+
+// Formato IDÊNTICO ao que o agente do WhatsApp grava em itens_pedido.observacao,
+// pra cozinha ler a mesma coisa venha o pedido de onde vier.
+function npObsMarmitex(m) {
+  const partes = []
+  if (m.carnes.length) partes.push(`Carnes: ${m.carnes.join(', ')}`)
+  if (m.acompanhamentos.length) partes.push(`Acompanhamentos: ${m.acompanhamentos.join(', ')}`)
+  return partes.join(' | ')
+}
+
+function npConfirmarMarmitex() {
+  const m = NP.montando
+  if (!m) return
+  if (!m.carnes.length && !m.acompanhamentos.length) {
+    m.erro = 'Escolha pelo menos uma carne ou um acompanhamento.'
+    renderNovoPedido()
+    return
+  }
+
+  // Marmitex com mistura diferente é item diferente: não agrupa com outra.
+  NP.itens.push({
+    produto_id: m.produto.id,
+    nome: m.produto.nome.trim(),
+    preco: precoProduto(m.produto),
+    quantidade: 1,
+    observacao: npObsMarmitex(m)
+  })
+  NP.montando = null
+  renderNovoPedido()
+}
+
+/* ─── CARRINHO ───────────────────────────────────── */
+
+function npAdicionarProduto(produtoId) {
+  npCapturarForm()
+  const produto = NP.produtos.find(p => p.id === produtoId)
+  if (!produto) return
+
+  if (ehMarmitex(produto)) {
+    npIniciarMarmitex(produtoId)
+    return
+  }
+
+  // Item simples agrupa por produto; item com observação nunca agrupa.
+  const existente = NP.itens.find(i => i.produto_id === produto.id && !i.observacao)
+  if (existente) existente.quantidade++
+  else NP.itens.push({ produto_id: produto.id, nome: produto.nome.trim(), preco: precoProduto(produto), quantidade: 1, observacao: null })
+
+  renderNovoPedido()
+}
+
+function npAlterarQtd(idx, delta) {
+  npCapturarForm()
+  const item = NP.itens[idx]
+  if (!item) return
+  item.quantidade += delta
+  if (item.quantidade < 1) NP.itens.splice(idx, 1)
+  renderNovoPedido()
+}
+
+function npRemoverItem(idx) {
+  npCapturarForm()
+  NP.itens.splice(idx, 1)
+  renderNovoPedido()
+}
+
+/* ─── TOTAIS ─────────────────────────────────────── */
+// Calculados na tela SÓ para conferência visual. Quem manda no valor gravado
+// é painel_criar_pedido no banco — a tela nunca envia preço nem total.
+const NP_TAXA_ENTREGA = 11
+
+function npTotais() {
+  const subtotal = NP.itens.reduce((s, i) => s + i.preco * i.quantidade, 0)
+  const taxa = NP.form.tipoEntrega === 'delivery' ? NP_TAXA_ENTREGA : 0
+  const usarCupom = NP.form.aplicarCupom && NP.cupom
+  const desconto = (usarCupom && NP.cupom.tipo !== 'brinde')
+    ? Math.round(subtotal * (Number(NP.cupom.desconto_percentual) || 0)) / 100
+    : 0
+  return {
+    subtotal: Math.round(subtotal * 100) / 100,
+    taxa,
+    desconto: Math.round(desconto * 100) / 100,
+    total: Math.round((subtotal + taxa - desconto) * 100) / 100
+  }
+}
+
+/* ─── RENDER ─────────────────────────────────────── */
+
 function npAvisoCupomHtml() {
   if (!NP.cupom) return ''
   const desc = NP.cupom.tipo === 'brinde'
     ? (NP.cupom.descricao || 'brinde de primeira compra')
     : `${NP.cupom.desconto_percentual}% de desconto`
   return `
-    <label style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.3);border-radius:8px;font-size:12.5px;cursor:pointer">
+    <label class="np-cupom">
       <input type="checkbox" id="np-aplicar-cupom" ${NP.form.aplicarCupom ? 'checked' : ''}>
       <span>🎁 Cliente tem cupom <b>${NP.cupom.codigo}</b> ativo: ${desc}. Aplicar?</span>
     </label>`
 }
 
+function npRenderCatalogo() {
+  const busca = npNorm(NP.busca)
+
+  // Buscando: ignora a categoria e procura no cardápio inteiro — quem digita
+  // "coca" quer a Coca, não quer saber em que aba ela mora.
+  const lista = busca
+    ? NP.produtos.filter(p => npNorm(p.nome).includes(busca))
+    : NP.produtos.filter(p => (p.categoria || 'Outros').trim() === NP.categoriaAtiva)
+
+  const abas = npCategorias().map(cat => `
+    <button type="button" class="np-cat ${!busca && cat === NP.categoriaAtiva ? 'ativa' : ''}"
+            onclick="npSelecionarCategoria('${cat.replace(/'/g, "\\'")}')">
+      ${NP_ICONE_CATEGORIA[cat] || '🍽️'} ${cat}
+    </button>`).join('')
+
+  const cards = lista.map(p => {
+    const noCarrinho = NP.itens.filter(i => i.produto_id === p.id).reduce((s, i) => s + i.quantidade, 0)
+    return `
+      <button type="button" class="np-produto ${noCarrinho ? 'no-carrinho' : ''}" onclick="npAdicionarProduto('${p.id}')">
+        ${noCarrinho ? `<span class="np-produto-qtd">${noCarrinho}</span>` : ''}
+        <span class="np-produto-nome">${p.nome.trim()}</span>
+        <span class="np-produto-preco">R$ ${fmt(precoProduto(p))}</span>
+        ${ehMarmitex(p) ? '<span class="np-produto-tag">escolher misturas</span>' : ''}
+      </button>`
+  }).join('')
+
+  return `
+    <div class="np-catalogo">
+      <input type="search" id="np-busca" class="np-busca" placeholder="🔎 Buscar em todo o cardápio..."
+             value="${NP.busca}" oninput="npBuscar(this.value)" autocomplete="off">
+      <div class="np-cats">${abas}</div>
+      <div class="np-produtos">
+        ${cards || '<p class="np-vazio">Nenhum produto encontrado.</p>'}
+      </div>
+    </div>`
+}
+
+let npBuscaTimer = null
+function npBuscar(valor) {
+  NP.busca = valor
+  // Debounce: sem isso cada tecla redesenha 138 cards e a digitação engasga
+  // no tablet.
+  clearTimeout(npBuscaTimer)
+  npBuscaTimer = setTimeout(() => {
+    renderNovoPedido()
+    const b = document.getElementById('np-busca')
+    if (b) { b.focus(); b.setSelectionRange(b.value.length, b.value.length) }
+  }, 180)
+}
+
+function npSelecionarCategoria(cat) {
+  npCapturarForm()
+  NP.categoriaAtiva = cat
+  NP.busca = ''
+  renderNovoPedido()
+}
+
+function npRenderMontagem() {
+  const m = NP.montando
+  if (m.carregando) {
+    return `<div class="np-montagem"><p class="np-vazio">Carregando cardápio de hoje...</p></div>`
+  }
+
+  const c = NP.cardapio || { carnes: [], acompanhamentos: [] }
+  const semCardapio = !c.carnes.length && !c.acompanhamentos.length
+
+  const chips = (lista, tipo, escolhidas) => lista.map(nome => `
+    <button type="button" class="np-chip ${escolhidas.includes(nome) ? 'on' : ''}"
+            onclick="npToggleMistura('${tipo}', ${JSON.stringify(nome).replace(/"/g, '&quot;')})">
+      ${escolhidas.includes(nome) ? '✓ ' : ''}${nome}
+    </button>`).join('')
+
+  return `
+    <div class="np-montagem">
+      <div class="np-montagem-head">
+        <h3>🍱 ${m.produto.nome.trim()} — o que vai dentro?</h3>
+        <button type="button" class="btn-sair" onclick="npCancelarMarmitex()">✕ Cancelar</button>
+      </div>
+
+      ${semCardapio ? `
+        <p class="np-alerta">⚠️ Nenhum item marcado no cardápio de hoje. Abra <b>🍲 Cardápio</b> no topo do painel e marque as carnes e acompanhamentos do dia — depois volte aqui.</p>
+      ` : `
+        <div class="np-grupo">
+          <div class="np-grupo-titulo">
+            <span>🥩 Carnes</span>
+            <span class="np-contador ${m.carnes.length >= NP_MAX_CARNES ? 'cheio' : ''}">${m.carnes.length}/${NP_MAX_CARNES}</span>
+          </div>
+          <div class="np-chips">${chips(c.carnes, 'carne', m.carnes) || '<span class="np-vazio">Nenhuma carne marcada hoje.</span>'}</div>
+        </div>
+
+        <div class="np-grupo">
+          <div class="np-grupo-titulo">
+            <span>🍚 Acompanhamentos</span>
+            <span class="np-contador ${m.acompanhamentos.length >= NP_MAX_ACOMP ? 'cheio' : ''}">${m.acompanhamentos.length}/${NP_MAX_ACOMP}</span>
+          </div>
+          <div class="np-chips">${chips(c.acompanhamentos, 'acomp', m.acompanhamentos) || '<span class="np-vazio">Nenhum acompanhamento marcado hoje.</span>'}</div>
+        </div>
+      `}
+
+      ${m.erro ? `<p class="np-erro">${m.erro}</p>` : ''}
+
+      <button type="button" class="np-btn-confirmar" onclick="npConfirmarMarmitex()">
+        ✅ Adicionar esta marmitex
+      </button>
+    </div>`
+}
+
+function npRenderCarrinho() {
+  const t = npTotais()
+
+  const linhas = NP.itens.map((i, idx) => `
+    <div class="np-item">
+      <div class="np-item-info">
+        <span class="np-item-nome">${i.nome}</span>
+        ${i.observacao ? `<span class="np-item-obs">${i.observacao}</span>` : ''}
+      </div>
+      <div class="np-item-dir">
+        <div class="np-stepper">
+          <button type="button" onclick="npAlterarQtd(${idx}, -1)">−</button>
+          <span>${i.quantidade}</span>
+          <button type="button" onclick="npAlterarQtd(${idx}, 1)">+</button>
+        </div>
+        <span class="np-item-preco">R$ ${fmt(i.preco * i.quantidade)}</span>
+        <button type="button" class="np-item-lixo" onclick="npRemoverItem(${idx})">🗑️</button>
+      </div>
+    </div>`).join('')
+
+  return `
+    <div class="np-carrinho-itens">
+      ${linhas || '<p class="np-vazio">Nenhum item ainda. Toque nos produtos ao lado. →</p>'}
+    </div>
+    <div class="np-totais">
+      <div class="np-total-linha"><span>Subtotal</span><span>R$ ${fmt(t.subtotal)}</span></div>
+      ${t.taxa > 0 ? `<div class="np-total-linha"><span>Taxa de entrega</span><span>R$ ${fmt(t.taxa)}</span></div>` : ''}
+      ${t.desconto > 0 ? `<div class="np-total-linha desconto"><span>Desconto</span><span>-R$ ${fmt(t.desconto)}</span></div>` : ''}
+      <div class="np-total-linha grande"><span>Total</span><span>R$ ${fmt(t.total)}</span></div>
+    </div>`
+}
+
+function npRenderTroco() {
+  if (NP.form.pagamento !== 'dinheiro') return ''
+  const t = npTotais()
+  const para = Number(String(NP.form.trocoPara).replace(',', '.')) || 0
+  const levar = para - t.total
+
+  let aviso = '<span class="np-troco-dica">Deixe vazio se o cliente tiver o valor certo.</span>'
+  if (para > 0 && levar < 0) {
+    aviso = `<span class="np-troco-erro">⚠️ R$ ${fmt(para)} é menos que o total (R$ ${fmt(t.total)}).</span>`
+  } else if (para > 0) {
+    aviso = `<span class="np-troco-ok">✅ Levar R$ ${fmt(levar)} de troco.</span>`
+  }
+
+  return `
+    <div class="np-troco">
+      <label for="np-troco">💵 Troco para quanto?</label>
+      <input type="text" id="np-troco" inputmode="decimal" placeholder="Ex: 100"
+             value="${NP.form.trocoPara}" oninput="npCapturarForm(); npAtualizarTroco()">
+      <div id="np-troco-aviso">${aviso}</div>
+    </div>`
+}
+
+// Atualiza só o aviso do troco, sem redesenhar o modal — senão o campo perde
+// o foco a cada dígito digitado.
+function npAtualizarTroco() {
+  const alvo = document.getElementById('np-troco-aviso')
+  if (!alvo) return
+  const t = npTotais()
+  const para = Number(String(NP.form.trocoPara).replace(',', '.')) || 0
+  const levar = para - t.total
+  if (!para) alvo.innerHTML = '<span class="np-troco-dica">Deixe vazio se o cliente tiver o valor certo.</span>'
+  else if (levar < 0) alvo.innerHTML = `<span class="np-troco-erro">⚠️ R$ ${fmt(para)} é menos que o total (R$ ${fmt(t.total)}).</span>`
+  else alvo.innerHTML = `<span class="np-troco-ok">✅ Levar R$ ${fmt(levar)} de troco.</span>`
+}
+
 function renderNovoPedido() {
   const card = document.getElementById('modal-novo-pedido-card')
-  const categorias = [...new Set(NP.produtos.map(p => p.categoria || 'Outros'))]
   const f = NP.form
 
-  const subtotal = NP.itens.reduce((s, i) => s + i.preco * i.quantidade, 0)
-
   card.innerHTML = `
-    <div style="display:flex;justify-content:space-between;align-items:center">
-      <h2 style="font-size:20px;font-weight:900;color:var(--amarelo)">➕ Novo pedido</h2>
-      <button class="btn-sair" onclick="fecharNovoPedido()">✕ Fechar</button>
+    <div class="np-head">
+      <h2>➕ Novo pedido</h2>
+      <button type="button" class="btn-sair" onclick="fecharNovoPedido()">✕ Fechar</button>
     </div>
 
-    <input type="text" id="np-telefone" placeholder="Telefone (com DDD)" inputmode="tel" value="${f.telefone}"
-           style="padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg-card2);color:var(--text);font-size:13px">
-    <div id="np-cupom-aviso">${npAvisoCupomHtml()}</div>
-    <input type="text" id="np-nome" placeholder="Nome do cliente" value="${f.nome}"
-           style="padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg-card2);color:var(--text);font-size:13px">
+    <div class="np-corpo">
+      <!-- COLUNA ESQUERDA: cliente + carrinho -->
+      <div class="np-col-esq">
+        <div class="np-bloco">
+          <input type="text" id="np-telefone" class="np-input" placeholder="📱 Telefone (com DDD)" inputmode="tel" value="${f.telefone}">
+          <div id="np-cupom-aviso">${npAvisoCupomHtml()}</div>
+          <input type="text" id="np-nome" class="np-input" placeholder="👤 Nome do cliente" value="${f.nome}">
 
-    <div style="display:flex;gap:8px">
-      <select id="np-tipo-entrega" onchange="npCapturarForm(); document.getElementById('np-endereco-wrap').style.display = this.value==='delivery' ? 'block' : 'none'"
-              style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-card2);color:var(--text);font-size:13px">
-        <option value="delivery" ${f.tipoEntrega === 'delivery' ? 'selected' : ''}>Delivery</option>
-        <option value="retirada" ${f.tipoEntrega === 'retirada' ? 'selected' : ''}>Retirada</option>
-      </select>
-      <select id="np-pagamento"
-              style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-card2);color:var(--text);font-size:13px">
-        <option value="pix" ${f.pagamento === 'pix' ? 'selected' : ''}>PIX</option>
-        <option value="dinheiro" ${f.pagamento === 'dinheiro' ? 'selected' : ''}>Dinheiro</option>
-        <option value="cartao" ${f.pagamento === 'cartao' ? 'selected' : ''}>Cartão</option>
-      </select>
-    </div>
-    <div id="np-endereco-wrap" style="display:${f.tipoEntrega === 'delivery' ? 'block' : 'none'}">
-      <input type="text" id="np-endereco" placeholder="Endereço de entrega" value="${f.endereco}"
-             style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg-card2);color:var(--text);font-size:13px;box-sizing:border-box">
-    </div>
+          <div class="np-linha2">
+            <select id="np-tipo-entrega" class="np-input" onchange="npCapturarForm(); renderNovoPedido()">
+              <option value="delivery" ${f.tipoEntrega === 'delivery' ? 'selected' : ''}>🛵 Delivery</option>
+              <option value="retirada" ${f.tipoEntrega === 'retirada' ? 'selected' : ''}>🏃 Retirada</option>
+            </select>
+            <select id="np-pagamento" class="np-input" onchange="npCapturarForm(); renderNovoPedido()">
+              <option value="pix" ${f.pagamento === 'pix' ? 'selected' : ''}>💸 PIX</option>
+              <option value="dinheiro" ${f.pagamento === 'dinheiro' ? 'selected' : ''}>💵 Dinheiro</option>
+              <option value="cartao" ${f.pagamento === 'cartao' ? 'selected' : ''}>💳 Cartão</option>
+            </select>
+          </div>
 
-    <h3 style="font-size:13px;font-weight:800;color:var(--text);margin:10px 0 2px">Itens</h3>
-    <div style="display:flex;gap:6px">
-      <select id="np-produto-select" style="flex:1;padding:7px;border-radius:8px;border:1px solid var(--border);background:var(--bg-card2);color:var(--text);font-size:13px">
-        ${categorias.map(cat => `
-          <optgroup label="${cat}">
-            ${NP.produtos.filter(p => (p.categoria || 'Outros') === cat).map(p =>
-              `<option value="${p.id}">${p.nome} — R$ ${fmt(precoProduto(p))}</option>`
-            ).join('')}
-          </optgroup>`).join('')}
-      </select>
-      <button onclick="npAdicionarItem()" style="padding:7px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);cursor:pointer;font-size:13px">+ Add</button>
-    </div>
+          ${f.tipoEntrega === 'delivery'
+            ? `<input type="text" id="np-endereco" class="np-input" placeholder="📍 Endereço de entrega" value="${f.endereco}">`
+            : ''}
 
-    <div id="np-itens-lista" style="display:flex;flex-direction:column;gap:4px;margin-top:4px">
-      ${NP.itens.map((i, idx) => `
-        <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px">
-          <span>${i.quantidade}x ${i.nome}</span>
-          <span style="display:flex;align-items:center;gap:8px">
-            R$ ${fmt(i.preco * i.quantidade)}
-            <button onclick="npRemoverItem(${idx})" style="background:none;border:none;color:var(--red-2);cursor:pointer;font-size:13px">🗑️</button>
-          </span>
-        </div>`).join('') || '<p style="font-size:12px;color:var(--text-muted)">Nenhum item ainda.</p>'}
-    </div>
+          ${npRenderTroco()}
+        </div>
 
-    <div style="display:flex;justify-content:space-between;font-size:16px;font-weight:800;border-top:1px solid var(--border);padding-top:8px;margin-top:6px">
-      <span>Subtotal</span><span style="color:var(--amarelo)">R$ ${fmt(subtotal)}</span>
-    </div>
+        <div class="np-bloco np-bloco-carrinho">
+          <h3 class="np-subtitulo">🧾 Pedido</h3>
+          ${npRenderCarrinho()}
+        </div>
 
-    <textarea id="np-observacao" placeholder="Observação (ex: mistura frango, sem cebola...)"
-              style="padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg-card2);color:var(--text);font-size:13px;resize:vertical;min-height:50px;box-sizing:border-box">${f.observacao}</textarea>
+        <textarea id="np-observacao" class="np-input np-obs" placeholder="📝 Observação geral (ex: sem cebola, tocar a campainha...)">${f.observacao}</textarea>
 
-    <p id="np-erro" style="font-size:12px;color:var(--red-2);font-weight:600;min-height:16px;margin-top:4px"></p>
-    <button class="btn-status" id="np-btn-criar" onclick="npCriarPedido()"
-            style="width:100%;text-align:center;cursor:pointer">✅ Criar pedido</button>`
+        <p id="np-erro" class="np-erro"></p>
+        <button type="button" class="np-btn-criar" id="np-btn-criar" onclick="npCriarPedido()">✅ Criar pedido</button>
+      </div>
 
-  document.getElementById('np-telefone').addEventListener('blur', npBuscarCliente)
+      <!-- COLUNA DIREITA: catálogo ou montagem da marmitex -->
+      <div class="np-col-dir">
+        ${NP.montando ? npRenderMontagem() : npRenderCatalogo()}
+      </div>
+    </div>`
+
+  const tel = document.getElementById('np-telefone')
+  if (tel) tel.addEventListener('blur', npBuscarCliente)
 }
 
 async function npBuscarCliente() {
@@ -975,7 +1434,7 @@ async function npBuscarCliente() {
   const avisoEl = document.getElementById('np-cupom-aviso')
   NP.cupom = null
   NP.clienteId = null
-  avisoEl.innerHTML = ''
+  if (avisoEl) avisoEl.innerHTML = ''
   if (!telefone) return
 
   const { data: cliente } = await sb.from('clientes')
@@ -983,37 +1442,22 @@ async function npBuscarCliente() {
 
   if (cliente) {
     NP.clienteId = cliente.id
-    if (cliente.nome) document.getElementById('np-nome').value = cliente.nome
-    if (cliente.endereco) document.getElementById('np-endereco').value = cliente.endereco
+    if (cliente.nome) {
+      NP.form.nome = cliente.nome
+      const el = document.getElementById('np-nome'); if (el) el.value = cliente.nome
+    }
+    if (cliente.endereco) {
+      NP.form.endereco = cliente.endereco
+      const el = document.getElementById('np-endereco'); if (el) el.value = cliente.endereco
+    }
   }
 
   const { data: cupom } = await sb.rpc('painel_cupom_ativo_por_telefone', { p_telefone: telefone })
   if (cupom) {
     NP.cupom = cupom
     NP.form.aplicarCupom = true
-    avisoEl.innerHTML = npAvisoCupomHtml()
+    if (avisoEl) avisoEl.innerHTML = npAvisoCupomHtml()
   }
-}
-
-function npAdicionarItem() {
-  npCapturarForm()
-  const select = document.getElementById('np-produto-select')
-  const produto = NP.produtos.find(p => p.id === select.value)
-  if (!produto) return
-
-  const existente = NP.itens.find(i => i.produto_id === produto.id)
-  if (existente) {
-    existente.quantidade++
-  } else {
-    NP.itens.push({ produto_id: produto.id, nome: produto.nome, preco: precoProduto(produto), quantidade: 1 })
-  }
-  renderNovoPedido()
-}
-
-function npRemoverItem(idx) {
-  npCapturarForm()
-  NP.itens.splice(idx, 1)
-  renderNovoPedido()
 }
 
 function fecharNovoPedido() {
@@ -1025,22 +1469,29 @@ document.getElementById('modal-novo-pedido').addEventListener('click', e => {
 })
 
 async function npCriarPedido() {
+  npCapturarForm()
   const erro = document.getElementById('np-erro')
   const btn = document.getElementById('np-btn-criar')
   erro.textContent = ''
 
-  const telefone = document.getElementById('np-telefone').value.replace(/\D/g, '')
-  const nome = document.getElementById('np-nome').value.trim()
-  const tipoEntrega = document.getElementById('np-tipo-entrega').value
-  const pagamento = document.getElementById('np-pagamento').value
-  const endereco = document.getElementById('np-endereco').value.trim() || null
-  const observacao = document.getElementById('np-observacao').value.trim() || null
-  const aplicarCupom = document.getElementById('np-aplicar-cupom')?.checked
+  const f = NP.form
+  const telefone = f.telefone.replace(/\D/g, '')
+  const nome = f.nome.trim()
+  const endereco = f.tipoEntrega === 'delivery' ? (f.endereco || '').trim() : null
+  const observacao = (f.observacao || '').trim() || null
 
   if (!telefone) { erro.textContent = 'Informe o telefone do cliente.'; return }
   if (!nome) { erro.textContent = 'Informe o nome do cliente.'; return }
-  if (tipoEntrega === 'delivery' && !endereco) { erro.textContent = 'Informe o endereço de entrega.'; return }
+  if (f.tipoEntrega === 'delivery' && !endereco) { erro.textContent = 'Informe o endereço de entrega.'; return }
   if (!NP.itens.length) { erro.textContent = 'Adicione pelo menos 1 item.'; return }
+  if (NP.montando) { erro.textContent = 'Termine de montar a marmitex antes de fechar o pedido.'; return }
+
+  let trocoPara = null
+  if (f.pagamento === 'dinheiro' && String(f.trocoPara).trim()) {
+    trocoPara = Number(String(f.trocoPara).replace(',', '.'))
+    if (!Number.isFinite(trocoPara) || trocoPara <= 0) { erro.textContent = 'Valor do troco inválido.'; return }
+    if (trocoPara < npTotais().total) { erro.textContent = 'O valor do troco é menor que o total do pedido.'; return }
+  }
 
   btn.disabled = true
   btn.textContent = '⏳ Criando...'
@@ -1051,17 +1502,25 @@ async function npCriarPedido() {
       p_nome_cliente: nome,
       p_telefone: telefone,
       p_endereco: endereco,
-      p_tipo_entrega: tipoEntrega,
-      p_forma_pagamento: pagamento,
-      p_itens: NP.itens.map(i => ({ produto_id: i.produto_id, quantidade: i.quantidade })),
+      p_tipo_entrega: f.tipoEntrega,
+      p_forma_pagamento: f.pagamento,
+      p_itens: NP.itens.map(i => ({
+        produto_id: i.produto_id,
+        quantidade: i.quantidade,
+        observacao: i.observacao || null
+      })),
       p_observacao: observacao,
-      p_cupom_codigo: (aplicarCupom && NP.cupom) ? NP.cupom.codigo : null
+      p_cupom_codigo: (f.aplicarCupom && NP.cupom) ? NP.cupom.codigo : null,
+      p_troco_para: trocoPara
     })
     if (error) throw error
 
     fecharNovoPedido()
     await carregarPedidos()
-    alert(`Pedido #${data.numeroPedido} criado! Total: R$ ${fmt(data.total)}${data.brindes?.length ? '\nBrinde: ' + data.brindes.join(' + ') : ''}`)
+    const extras = []
+    if (data.brindes?.length) extras.push(`Brinde: ${data.brindes.join(' + ')}`)
+    if (data.trocoPara) extras.push(`Troco para R$ ${fmt(data.trocoPara)}`)
+    avisar(`✅ Pedido #${data.numeroPedido} criado — R$ ${fmt(data.total)}${extras.length ? ' · ' + extras.join(' · ') : ''}`)
   } catch (e) {
     erro.textContent = e.message || 'Erro ao criar pedido.'
   } finally {
@@ -1069,6 +1528,7 @@ async function npCriarPedido() {
     btn.textContent = '✅ Criar pedido'
   }
 }
+
 
 /* ─── START ──────────────────────────────────────── */
 // Sem tela de login: o painel é interno e abre direto.

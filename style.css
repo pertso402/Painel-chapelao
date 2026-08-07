@@ -34,6 +34,13 @@
   --text-2: #B9B0A6;
   --text-3: #7E756C;
 
+  /* Apelidos usados nos estilos inline dos modais (painel.js). Não existiam,
+     então --amarelo, --bg-card2 e --text-muted caíam em vazio e os modais
+     apareciam sem cor de destaque nem fundo nos blocos. */
+  --amarelo: var(--gold);
+  --bg-card2: var(--surface-2);
+  --text-muted: var(--text-2);
+
   --radius: 16px;
   --radius-sm: 11px;
   --shadow: 0 10px 30px -8px rgba(0,0,0,.55);
@@ -673,3 +680,197 @@ body::before {
   body { background: #fff; color: #000; }
   body::before, .painel-header, .tabs-nav, .pc-actions, .modal-overlay { display: none !important; }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   NOVO PEDIDO MANUAL — catálogo em duas colunas
+   O modal padrão tem 520px; aqui precisamos de espaço pro
+   catálogo ficar ao lado do carrinho, senão vira rolagem
+   infinita no tablet da cozinha.
+═══════════════════════════════════════════════════════════ */
+
+#modal-novo-pedido-card { width: min(1140px, 100%); padding: 20px 22px; gap: 12px; }
+
+.np-head { display: flex; justify-content: space-between; align-items: center; }
+.np-head h2 { font-size: 20px; font-weight: 900; color: var(--gold); }
+
+.np-corpo { display: grid; grid-template-columns: minmax(300px, 380px) 1fr; gap: 16px; align-items: start; }
+.np-col-esq, .np-col-dir { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+
+.np-bloco {
+  display: flex; flex-direction: column; gap: 8px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 12px;
+}
+.np-subtitulo { font-size: 13px; font-weight: 800; color: var(--text); }
+
+.np-input {
+  padding: 9px 11px; border-radius: 9px; border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text); font-size: 13.5px;
+  font-family: inherit; width: 100%;
+}
+.np-input:focus { outline: none; border-color: var(--gold-deep); }
+.np-linha2 { display: flex; gap: 8px; }
+.np-linha2 .np-input { flex: 1; }
+.np-obs { resize: vertical; min-height: 46px; }
+
+.np-cupom {
+  display: flex; align-items: center; gap: 8px; padding: 8px 10px;
+  background: rgba(52,211,153,.1); border: 1px solid rgba(52,211,153,.3);
+  border-radius: 8px; font-size: 12.5px; cursor: pointer;
+}
+
+/* ─── Busca e categorias ─── */
+.np-catalogo { display: flex; flex-direction: column; gap: 10px; }
+.np-busca {
+  padding: 11px 13px; border-radius: 10px; border: 1px solid var(--border-2);
+  background: var(--surface-2); color: var(--text); font-size: 14.5px;
+  font-family: inherit; width: 100%;
+}
+.np-busca:focus { outline: none; border-color: var(--gold); }
+
+.np-cats { display: flex; flex-wrap: wrap; gap: 6px; }
+.np-cat {
+  padding: 7px 13px; border-radius: 999px; border: 1px solid var(--border-2);
+  background: var(--surface-2); color: var(--text-2);
+  font-size: 12.5px; font-weight: 700; font-family: inherit;
+  cursor: pointer; transition: all .15s; white-space: nowrap;
+}
+.np-cat:hover { border-color: var(--gold-deep); color: var(--text); }
+.np-cat.ativa { background: var(--gold); border-color: var(--gold); color: #1A1515; }
+
+/* ─── Grade de produtos ─── */
+/* auto-fill + minmax: em tela grande cabem 4 colunas, no tablet 2, sem
+   media query. Altura mínima de 66px porque o alvo é dedo, não mouse. */
+.np-produtos {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(158px, 1fr));
+  gap: 8px; max-height: 46vh; overflow-y: auto; padding-right: 4px;
+}
+.np-produto {
+  position: relative; display: flex; flex-direction: column; gap: 3px;
+  min-height: 66px; padding: 10px 11px; text-align: left;
+  border-radius: 10px; border: 1px solid var(--border);
+  background: var(--surface-2); color: var(--text);
+  font-family: inherit; cursor: pointer; transition: all .12s;
+}
+.np-produto:hover { border-color: var(--gold-deep); background: var(--surface-3); transform: translateY(-1px); }
+.np-produto:active { transform: translateY(0); }
+.np-produto.no-carrinho { border-color: var(--gold); background: rgba(255,199,40,.08); }
+.np-produto-nome { font-size: 12.5px; font-weight: 700; line-height: 1.25; }
+.np-produto-preco { font-size: 13px; font-weight: 800; color: var(--gold); }
+.np-produto-tag { font-size: 10px; color: var(--text-3); font-weight: 700; text-transform: uppercase; letter-spacing: .3px; }
+.np-produto-qtd {
+  position: absolute; top: -6px; right: -6px; min-width: 21px; height: 21px;
+  border-radius: 999px; background: var(--gold); color: #1A1515;
+  font-size: 11.5px; font-weight: 900; display: grid; place-items: center; padding: 0 5px;
+}
+
+.np-vazio { font-size: 12.5px; color: var(--text-3); padding: 10px 2px; }
+
+/* ─── Montagem da marmitex ─── */
+.np-montagem {
+  display: flex; flex-direction: column; gap: 12px;
+  background: var(--surface); border: 1.5px solid var(--gold-deep);
+  border-radius: var(--radius-sm); padding: 14px;
+}
+.np-montagem-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.np-montagem-head h3 { font-size: 15px; font-weight: 800; color: var(--gold); }
+
+.np-grupo { display: flex; flex-direction: column; gap: 7px; }
+.np-grupo-titulo { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 800; }
+.np-contador {
+  font-size: 11.5px; font-weight: 800; padding: 2px 9px; border-radius: 999px;
+  background: var(--surface-3); color: var(--text-2);
+}
+.np-contador.cheio { background: var(--gold); color: #1A1515; }
+
+.np-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.np-chip {
+  padding: 8px 13px; border-radius: 999px; border: 1px solid var(--border-2);
+  background: var(--surface-2); color: var(--text-2);
+  font-size: 12.5px; font-weight: 600; font-family: inherit;
+  cursor: pointer; transition: all .12s;
+}
+.np-chip:hover { border-color: var(--gold-deep); color: var(--text); }
+.np-chip.on { background: var(--gold); border-color: var(--gold); color: #1A1515; font-weight: 800; }
+
+.np-alerta {
+  font-size: 12.5px; line-height: 1.5; padding: 11px 13px; border-radius: 9px;
+  background: rgba(224,67,63,.12); border: 1px solid rgba(224,67,63,.35); color: var(--text);
+}
+.np-btn-confirmar, .np-btn-criar {
+  padding: 13px; border-radius: 11px; border: none;
+  background: var(--gold); color: #1A1515;
+  font-size: 14.5px; font-weight: 900; font-family: inherit; cursor: pointer;
+  transition: filter .12s;
+}
+.np-btn-confirmar:hover, .np-btn-criar:hover { filter: brightness(1.08); }
+.np-btn-criar:disabled { opacity: .55; cursor: default; }
+
+/* ─── Carrinho ─── */
+.np-bloco-carrinho { gap: 6px; }
+.np-carrinho-itens { display: flex; flex-direction: column; gap: 5px; max-height: 30vh; overflow-y: auto; }
+.np-item {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  padding: 7px 9px; border-radius: 9px; background: var(--surface-2);
+}
+.np-item-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.np-item-nome { font-size: 12.5px; font-weight: 700; }
+.np-item-obs { font-size: 11px; color: var(--text-2); line-height: 1.35; }
+.np-item-dir { display: flex; align-items: center; gap: 8px; }
+.np-item-preco { font-size: 12.5px; font-weight: 800; color: var(--gold); min-width: 62px; text-align: right; }
+.np-item-lixo { background: none; border: none; color: var(--red-2); cursor: pointer; font-size: 13px; padding: 2px; }
+
+.np-stepper { display: flex; align-items: center; gap: 2px; background: var(--surface-3); border-radius: 8px; padding: 2px; }
+.np-stepper button {
+  width: 25px; height: 25px; border: none; border-radius: 6px;
+  background: transparent; color: var(--text); font-size: 15px; font-weight: 800;
+  cursor: pointer; font-family: inherit; line-height: 1;
+}
+.np-stepper button:hover { background: var(--surface); }
+.np-stepper span { min-width: 20px; text-align: center; font-size: 12.5px; font-weight: 800; }
+
+.np-totais { display: flex; flex-direction: column; gap: 3px; border-top: 1px solid var(--border); padding-top: 8px; margin-top: 4px; }
+.np-total-linha { display: flex; justify-content: space-between; font-size: 12.5px; color: var(--text-2); }
+.np-total-linha.desconto { color: var(--st-pronto); }
+.np-total-linha.grande { font-size: 17px; font-weight: 900; color: var(--text); margin-top: 3px; }
+.np-total-linha.grande span:last-child { color: var(--gold); }
+
+/* ─── Troco ─── */
+.np-troco { display: flex; flex-direction: column; gap: 5px; padding: 10px; border-radius: 9px; background: rgba(255,199,40,.07); border: 1px solid rgba(255,199,40,.28); }
+.np-troco label { font-size: 12.5px; font-weight: 800; color: var(--gold); }
+.np-troco input {
+  padding: 9px 11px; border-radius: 8px; border: 1px solid var(--border-2);
+  background: var(--surface-2); color: var(--text); font-size: 14px; font-family: inherit;
+}
+.np-troco input:focus { outline: none; border-color: var(--gold); }
+.np-troco-dica { font-size: 11.5px; color: var(--text-3); }
+.np-troco-ok { font-size: 12.5px; font-weight: 800; color: var(--st-pronto); }
+.np-troco-erro { font-size: 12.5px; font-weight: 800; color: var(--red-2); }
+
+.np-erro { font-size: 12.5px; color: var(--red-2); font-weight: 700; min-height: 16px; }
+
+/* Uma coluna no tablet retrato / celular: o catálogo vem primeiro porque é
+   onde a montagem do pedido começa. */
+@media (max-width: 900px) {
+  .np-corpo { grid-template-columns: 1fr; }
+  .np-col-dir { order: -1; }
+  .np-produtos { max-height: 38vh; }
+}
+
+/* ─── Troco no card do pedido ─── */
+.pc-troco {
+  font-size: 12px; font-weight: 800; color: var(--gold);
+  background: rgba(255,199,40,.1); border: 1px solid rgba(255,199,40,.3);
+  border-radius: 7px; padding: 5px 8px;
+}
+
+/* ─── Toast (avisos que não travam a tela como o alert()) ─── */
+.toast-painel {
+  position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%);
+  z-index: 9999; max-width: min(560px, 92vw); display: none;
+  padding: 14px 20px; border-radius: 12px;
+  background: var(--surface-2); border: 1.5px solid var(--gold);
+  color: var(--text); font-size: 14px; font-weight: 700; line-height: 1.45;
+  white-space: pre-line; box-shadow: var(--shadow-lg);
+}
+.toast-painel.erro { border-color: var(--red-2); background: rgba(224,67,63,.16); }
