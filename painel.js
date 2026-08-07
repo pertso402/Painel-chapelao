@@ -11,6 +11,7 @@ const FLUXO_STATUS = ['pendente', 'preparando', 'pronto', 'saiu_entrega', 'entre
 
 const P = {
   pedidos: [],
+  alertas: [],
   tabAtiva: 'pendente',
   lojaAberta: true,
   midiaBuffet: null,
@@ -23,6 +24,7 @@ async function iniciarPainel() {
   await carregarLojaStatus()
   await carregarMidiaBuffet()
   await carregarStatusCardapio()
+  await carregarAlertas()
   subscribeRealtime()
 }
 
@@ -73,6 +75,18 @@ function subscribeRealtime() {
     }, async () => {
       await carregarPedidos()
     })
+    .on('postgres_changes', {
+      event: 'INSERT', schema: 'public', table: 'atendimento_alertas'
+    }, async payload => {
+      tocaSomAlerta()
+      await carregarAlertas()
+      notificar(`🆘 ${payload.new.nome_cliente || 'Cliente'} precisa de ajuda!`)
+    })
+    .on('postgres_changes', {
+      event: 'UPDATE', schema: 'public', table: 'atendimento_alertas'
+    }, async () => {
+      await carregarAlertas()
+    })
     .subscribe()
 }
 
@@ -90,6 +104,27 @@ function tocaSom() {
     gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5)
     osc.start(ctx.currentTime)
     osc.stop(ctx.currentTime + 0.5)
+  } catch (e) {}
+}
+
+/* Som de alerta de atendimento — diferente do som de pedido novo (3 bips
+   agudos em vez de 1 sequência curta), pra ninguém confundir os dois. */
+function tocaSomAlerta() {
+  try {
+    const ctx = new AudioContext()
+    const tempos = [0, 0.28, 0.56]
+    tempos.forEach(t => {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      osc.connect(gain)
+      gain.connect(ctx.destination)
+      osc.type = 'square'
+      osc.frequency.setValueAtTime(1400, ctx.currentTime + t)
+      gain.gain.setValueAtTime(0.25, ctx.currentTime + t)
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + t + 0.2)
+      osc.start(ctx.currentTime + t)
+      osc.stop(ctx.currentTime + t + 0.2)
+    })
   } catch (e) {}
 }
 
@@ -229,6 +264,72 @@ function botoesAcao(p) {
 async function mudarStatus(id, novoStatus) {
   await sb.from('pedidos').update({ status: novoStatus, updated_at: new Date().toISOString() }).eq('id', id)
   await carregarPedidos()
+}
+
+/* ─── ALERTAS DE ATENDIMENTO HUMANO ─────────────── */
+async function carregarAlertas() {
+  const { data } = await sb
+    .from('atendimento_alertas')
+    .select('id, telefone, nome_cliente, motivo, criado_em')
+    .eq('status', 'aberto')
+    .order('criado_em', { ascending: false })
+
+  P.alertas = data || []
+  renderAlertas()
+  atualizarTituloAba()
+}
+
+function renderAlertas() {
+  const banner = document.getElementById('alertas-banner')
+  if (!P.alertas.length) {
+    banner.style.display = 'none'
+    banner.innerHTML = ''
+    return
+  }
+
+  banner.style.display = 'flex'
+  banner.innerHTML = P.alertas.map(a => {
+    const mins = Math.floor((Date.now() - new Date(a.criado_em)) / 60000)
+    const tempo = mins < 1 ? 'agora mesmo' : mins < 60 ? `há ${mins}min` : `há ${Math.floor(mins / 60)}h${mins % 60}m`
+    return `
+      <div class="alerta-card">
+        <span class="alerta-icone">🆘</span>
+        <div class="alerta-corpo">
+          <div class="alerta-titulo"><b>${a.nome_cliente || 'Cliente'}</b> (${a.telefone}) precisa de ajuda</div>
+          <div class="alerta-motivo">${a.motivo}</div>
+          <div class="alerta-tempo">⏱ ${tempo} · atendimento automático pausado</div>
+        </div>
+        <div class="alerta-acoes">
+          <button class="btn-alerta whatsapp" onclick="abrirWhatsApp('${a.telefone}')">💬 WhatsApp</button>
+          <button class="btn-alerta resolver" onclick="resolverAlerta('${a.id}','${a.telefone}')">✅ Resolver</button>
+        </div>
+      </div>`
+  }).join('')
+}
+
+async function resolverAlerta(id, telefone) {
+  await sb.from('atendimento_alertas')
+    .update({ status: 'resolvido', resolvido_em: new Date().toISOString() })
+    .eq('id', id)
+  // Libera o atendimento automático NA HORA, sem esperar o timeout de 1h da pausa.
+  await sb.from('agente_pausas').delete().eq('telefone', telefone)
+  await carregarAlertas()
+}
+
+/* Pisca o título da aba enquanto tem alerta aberto — chama atenção mesmo
+   se o painel estiver numa aba de fundo do navegador. */
+let tituloOriginal = document.title
+let tituloTimer = null
+function atualizarTituloAba() {
+  if (P.alertas.length && !tituloTimer) {
+    tituloTimer = setInterval(() => {
+      document.title = document.title === tituloOriginal ? `🆘 (${P.alertas.length}) Precisa de ajuda!` : tituloOriginal
+    }, 1000)
+  } else if (!P.alertas.length && tituloTimer) {
+    clearInterval(tituloTimer)
+    tituloTimer = null
+    document.title = tituloOriginal
+  }
 }
 
 /* ─── BADGES & RESUMO ───────────────────────────── */
