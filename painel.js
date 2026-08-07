@@ -722,6 +722,253 @@ async function adicionarItemCardapio(categoria) {
   abrirCardapio(selecao)
 }
 
+/* ─── NOVO PEDIDO MANUAL ─────────────────────────── */
+// Pra clientes que respondem ao disparo de recompra num número que ainda
+// não tem atendimento automático: o atendente monta o pedido aqui. Preço
+// vem do banco (produtos), e o cupom (desconto ou brinde) é validado e
+// aplicado por painel_criar_pedido — a mesma trava de "só os itens
+// permitidos" do agente de atendimento vale aqui também, no servidor,
+// não só na tela.
+const NP = {
+  produtos: [], itens: [], cupom: null, clienteId: null,
+  // Campos do formulário ficam aqui, não só no DOM — renderNovoPedido()
+  // redesenha o modal inteiro toda vez que um item é adicionado/removido
+  // (mais simples que atualizar só a listinha), e sem isso os campos já
+  // preenchidos (telefone, nome...) eram apagados a cada "+ Add".
+  form: { telefone: '', nome: '', endereco: '', tipoEntrega: 'delivery', pagamento: 'pix', observacao: '', aplicarCupom: true }
+}
+
+// Lê os valores atuais da tela pro estado, ANTES de um re-render que vai
+// substituir o HTML e perder o que a pessoa digitou.
+function npCapturarForm() {
+  const val = (id) => document.getElementById(id)?.value
+  NP.form.telefone = val('np-telefone') ?? NP.form.telefone
+  NP.form.nome = val('np-nome') ?? NP.form.nome
+  NP.form.endereco = val('np-endereco') ?? NP.form.endereco
+  NP.form.tipoEntrega = val('np-tipo-entrega') ?? NP.form.tipoEntrega
+  NP.form.pagamento = val('np-pagamento') ?? NP.form.pagamento
+  NP.form.observacao = val('np-observacao') ?? NP.form.observacao
+  const chk = document.getElementById('np-aplicar-cupom')
+  if (chk) NP.form.aplicarCupom = chk.checked
+}
+
+async function abrirNovoPedido() {
+  const card = document.getElementById('modal-novo-pedido-card')
+  card.innerHTML = `<p style="text-align:center;padding:20px;color:var(--text-muted)">Carregando cardápio...</p>`
+  document.getElementById('modal-novo-pedido').classList.add('open')
+
+  NP.itens = []
+  NP.cupom = null
+  NP.clienteId = null
+  NP.form = { telefone: '', nome: '', endereco: '', tipoEntrega: 'delivery', pagamento: 'pix', observacao: '', aplicarCupom: true }
+
+  if (!NP.produtos.length) {
+    const { data, error } = await sb.from('produtos')
+      .select('id, nome, preco, preco_delivery, preco_promocional, categoria')
+      .eq('disponivel', true)
+      .order('categoria').order('nome')
+    if (error) {
+      card.innerHTML = `<p style="text-align:center;padding:20px;color:var(--red-2)">Erro ao carregar cardápio: ${error.message}</p>`
+      return
+    }
+    NP.produtos = data || []
+  }
+
+  renderNovoPedido()
+}
+
+function precoProduto(p) {
+  return Number(p.preco_promocional ?? p.preco_delivery ?? p.preco)
+}
+
+function npAvisoCupomHtml() {
+  if (!NP.cupom) return ''
+  const desc = NP.cupom.tipo === 'brinde'
+    ? (NP.cupom.descricao || 'brinde de primeira compra')
+    : `${NP.cupom.desconto_percentual}% de desconto`
+  return `
+    <label style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.3);border-radius:8px;font-size:12.5px;cursor:pointer">
+      <input type="checkbox" id="np-aplicar-cupom" ${NP.form.aplicarCupom ? 'checked' : ''}>
+      <span>🎁 Cliente tem cupom <b>${NP.cupom.codigo}</b> ativo: ${desc}. Aplicar?</span>
+    </label>`
+}
+
+function renderNovoPedido() {
+  const card = document.getElementById('modal-novo-pedido-card')
+  const categorias = [...new Set(NP.produtos.map(p => p.categoria || 'Outros'))]
+  const f = NP.form
+
+  const subtotal = NP.itens.reduce((s, i) => s + i.preco * i.quantidade, 0)
+
+  card.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center">
+      <h2 style="font-size:20px;font-weight:900;color:var(--amarelo)">➕ Novo pedido</h2>
+      <button class="btn-sair" onclick="fecharNovoPedido()">✕ Fechar</button>
+    </div>
+
+    <input type="text" id="np-telefone" placeholder="Telefone (com DDD)" inputmode="tel" value="${f.telefone}"
+           style="padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg-card2);color:var(--text);font-size:13px">
+    <div id="np-cupom-aviso">${npAvisoCupomHtml()}</div>
+    <input type="text" id="np-nome" placeholder="Nome do cliente" value="${f.nome}"
+           style="padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg-card2);color:var(--text);font-size:13px">
+
+    <div style="display:flex;gap:8px">
+      <select id="np-tipo-entrega" onchange="npCapturarForm(); document.getElementById('np-endereco-wrap').style.display = this.value==='delivery' ? 'block' : 'none'"
+              style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-card2);color:var(--text);font-size:13px">
+        <option value="delivery" ${f.tipoEntrega === 'delivery' ? 'selected' : ''}>Delivery</option>
+        <option value="retirada" ${f.tipoEntrega === 'retirada' ? 'selected' : ''}>Retirada</option>
+      </select>
+      <select id="np-pagamento"
+              style="flex:1;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--bg-card2);color:var(--text);font-size:13px">
+        <option value="pix" ${f.pagamento === 'pix' ? 'selected' : ''}>PIX</option>
+        <option value="dinheiro" ${f.pagamento === 'dinheiro' ? 'selected' : ''}>Dinheiro</option>
+        <option value="cartao" ${f.pagamento === 'cartao' ? 'selected' : ''}>Cartão</option>
+      </select>
+    </div>
+    <div id="np-endereco-wrap" style="display:${f.tipoEntrega === 'delivery' ? 'block' : 'none'}">
+      <input type="text" id="np-endereco" placeholder="Endereço de entrega" value="${f.endereco}"
+             style="width:100%;padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg-card2);color:var(--text);font-size:13px;box-sizing:border-box">
+    </div>
+
+    <h3 style="font-size:13px;font-weight:800;color:var(--text);margin:10px 0 2px">Itens</h3>
+    <div style="display:flex;gap:6px">
+      <select id="np-produto-select" style="flex:1;padding:7px;border-radius:8px;border:1px solid var(--border);background:var(--bg-card2);color:var(--text);font-size:13px">
+        ${categorias.map(cat => `
+          <optgroup label="${cat}">
+            ${NP.produtos.filter(p => (p.categoria || 'Outros') === cat).map(p =>
+              `<option value="${p.id}">${p.nome} — R$ ${fmt(precoProduto(p))}</option>`
+            ).join('')}
+          </optgroup>`).join('')}
+      </select>
+      <button onclick="npAdicionarItem()" style="padding:7px 12px;border-radius:8px;border:1px solid var(--border);background:var(--surface-2);color:var(--text);cursor:pointer;font-size:13px">+ Add</button>
+    </div>
+
+    <div id="np-itens-lista" style="display:flex;flex-direction:column;gap:4px;margin-top:4px">
+      ${NP.itens.map((i, idx) => `
+        <div style="display:flex;justify-content:space-between;align-items:center;font-size:13px">
+          <span>${i.quantidade}x ${i.nome}</span>
+          <span style="display:flex;align-items:center;gap:8px">
+            R$ ${fmt(i.preco * i.quantidade)}
+            <button onclick="npRemoverItem(${idx})" style="background:none;border:none;color:var(--red-2);cursor:pointer;font-size:13px">🗑️</button>
+          </span>
+        </div>`).join('') || '<p style="font-size:12px;color:var(--text-muted)">Nenhum item ainda.</p>'}
+    </div>
+
+    <div style="display:flex;justify-content:space-between;font-size:16px;font-weight:800;border-top:1px solid var(--border);padding-top:8px;margin-top:6px">
+      <span>Subtotal</span><span style="color:var(--amarelo)">R$ ${fmt(subtotal)}</span>
+    </div>
+
+    <textarea id="np-observacao" placeholder="Observação (ex: mistura frango, sem cebola...)"
+              style="padding:8px 10px;border-radius:8px;border:1px solid var(--border);background:var(--bg-card2);color:var(--text);font-size:13px;resize:vertical;min-height:50px;box-sizing:border-box">${f.observacao}</textarea>
+
+    <p id="np-erro" style="font-size:12px;color:var(--red-2);font-weight:600;min-height:16px;margin-top:4px"></p>
+    <button class="btn-status" id="np-btn-criar" onclick="npCriarPedido()"
+            style="width:100%;text-align:center;cursor:pointer">✅ Criar pedido</button>`
+
+  document.getElementById('np-telefone').addEventListener('blur', npBuscarCliente)
+}
+
+async function npBuscarCliente() {
+  npCapturarForm()
+  const telefone = NP.form.telefone.replace(/\D/g, '')
+  const avisoEl = document.getElementById('np-cupom-aviso')
+  NP.cupom = null
+  NP.clienteId = null
+  avisoEl.innerHTML = ''
+  if (!telefone) return
+
+  const { data: cliente } = await sb.from('clientes')
+    .select('id, nome, endereco').eq('telefone', telefone).maybeSingle()
+
+  if (cliente) {
+    NP.clienteId = cliente.id
+    if (cliente.nome) document.getElementById('np-nome').value = cliente.nome
+    if (cliente.endereco) document.getElementById('np-endereco').value = cliente.endereco
+  }
+
+  const { data: cupom } = await sb.rpc('painel_cupom_ativo_por_telefone', { p_telefone: telefone })
+  if (cupom) {
+    NP.cupom = cupom
+    NP.form.aplicarCupom = true
+    avisoEl.innerHTML = npAvisoCupomHtml()
+  }
+}
+
+function npAdicionarItem() {
+  npCapturarForm()
+  const select = document.getElementById('np-produto-select')
+  const produto = NP.produtos.find(p => p.id === select.value)
+  if (!produto) return
+
+  const existente = NP.itens.find(i => i.produto_id === produto.id)
+  if (existente) {
+    existente.quantidade++
+  } else {
+    NP.itens.push({ produto_id: produto.id, nome: produto.nome, preco: precoProduto(produto), quantidade: 1 })
+  }
+  renderNovoPedido()
+}
+
+function npRemoverItem(idx) {
+  npCapturarForm()
+  NP.itens.splice(idx, 1)
+  renderNovoPedido()
+}
+
+function fecharNovoPedido() {
+  document.getElementById('modal-novo-pedido').classList.remove('open')
+}
+
+document.getElementById('modal-novo-pedido').addEventListener('click', e => {
+  if (e.target === document.getElementById('modal-novo-pedido')) fecharNovoPedido()
+})
+
+async function npCriarPedido() {
+  const erro = document.getElementById('np-erro')
+  const btn = document.getElementById('np-btn-criar')
+  erro.textContent = ''
+
+  const telefone = document.getElementById('np-telefone').value.replace(/\D/g, '')
+  const nome = document.getElementById('np-nome').value.trim()
+  const tipoEntrega = document.getElementById('np-tipo-entrega').value
+  const pagamento = document.getElementById('np-pagamento').value
+  const endereco = document.getElementById('np-endereco').value.trim() || null
+  const observacao = document.getElementById('np-observacao').value.trim() || null
+  const aplicarCupom = document.getElementById('np-aplicar-cupom')?.checked
+
+  if (!telefone) { erro.textContent = 'Informe o telefone do cliente.'; return }
+  if (!nome) { erro.textContent = 'Informe o nome do cliente.'; return }
+  if (tipoEntrega === 'delivery' && !endereco) { erro.textContent = 'Informe o endereço de entrega.'; return }
+  if (!NP.itens.length) { erro.textContent = 'Adicione pelo menos 1 item.'; return }
+
+  btn.disabled = true
+  btn.textContent = '⏳ Criando...'
+
+  try {
+    const { data, error } = await sb.rpc('painel_criar_pedido', {
+      p_cliente_id: NP.clienteId,
+      p_nome_cliente: nome,
+      p_telefone: telefone,
+      p_endereco: endereco,
+      p_tipo_entrega: tipoEntrega,
+      p_forma_pagamento: pagamento,
+      p_itens: NP.itens.map(i => ({ produto_id: i.produto_id, quantidade: i.quantidade })),
+      p_observacao: observacao,
+      p_cupom_codigo: (aplicarCupom && NP.cupom) ? NP.cupom.codigo : null
+    })
+    if (error) throw error
+
+    fecharNovoPedido()
+    await carregarPedidos()
+    alert(`Pedido #${data.numeroPedido} criado! Total: R$ ${fmt(data.total)}${data.brindes?.length ? '\nBrinde: ' + data.brindes.join(' + ') : ''}`)
+  } catch (e) {
+    erro.textContent = e.message || 'Erro ao criar pedido.'
+  } finally {
+    btn.disabled = false
+    btn.textContent = '✅ Criar pedido'
+  }
+}
+
 /* ─── START ──────────────────────────────────────── */
 // Sem tela de login: o painel é interno e abre direto.
 document.addEventListener('DOMContentLoaded', () => {

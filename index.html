@@ -30,6 +30,7 @@
         </div>
         <button class="btn-buffet" id="btn-buffet" onclick="abrirBuffet()">🍽️ Buffet</button>
         <button class="btn-buffet" id="btn-cardapio" onclick="abrirCardapio()">🍲 Cardápio</button>
+        <button class="btn-buffet" onclick="abrirNovoPedido()">➕ Novo Pedido</button>
         <a href="/admin" class="btn-admin-link">⚙️ Admin</a>
       </div>
     </header>
@@ -84,6 +85,13 @@
   <!-- MODAL CARDÁPIO DO DIA (misturas + acompanhamentos da marmitex) -->
   <div class="modal-overlay" id="modal-cardapio">
     <div class="modal-card" id="modal-cardapio-card">
+      <!-- populated by JS -->
+    </div>
+  </div>
+
+  <!-- MODAL NOVO PEDIDO MANUAL -->
+  <div class="modal-overlay" id="modal-novo-pedido">
+    <div class="modal-card" id="modal-novo-pedido-card">
       <!-- populated by JS -->
     </div>
   </div>
