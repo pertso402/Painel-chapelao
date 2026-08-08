@@ -51,7 +51,7 @@ async function carregarPedidos() {
     .from('pedidos')
     .select(`
       id, numero_pedido, status, tipo_entrega, endereco_entrega,
-      forma_pagamento, troco_para, subtotal, taxa_entrega, desconto, total, observacao,
+      forma_pagamento, troco_para, subtotal, taxa_entrega, desconto, total, observacao, canal,
       created_at, updated_at,
       clientes ( id, nome, telefone ),
       itens_pedido ( nome_produto, quantidade, preco_unitario, total, observacao )
@@ -205,6 +205,7 @@ function cardPedido(p) {
       <div class="pc-info">
         <span class="pc-badge ${tipo === 'delivery' ? 'delivery' : ''}">${tipo === 'delivery' ? '🛵 Delivery' : '🏃 Retirada'}</span>
         <span class="pc-badge ${pgto === 'pix' ? 'pix' : ''}">${pgtoLabel(pgto)}</span>
+        <span class="pc-badge">${canalLabel(p.canal)}</span>
       </div>
       ${troco}
       <div class="pc-itens">${itensTexto || '—'}</div>
@@ -213,6 +214,20 @@ function cardPedido(p) {
         ${acoes}
       </div>
     </div>`
+}
+
+// Rótulo do canal de origem do pedido — pra medir depois de onde vem cada
+// venda (anúncio, recompra, whatsapp orgânico, instagram, balcão).
+function canalLabel(c) {
+  switch ((c || '').toLowerCase()) {
+    case 'whatsapp_anuncio':   return '📢 Anúncio'
+    case 'recompra':           return '🔁 Recompra'
+    case 'whatsapp_organico':  return '💬 WhatsApp'
+    case 'instagram':          return '📸 Instagram'
+    case 'balcao':             return '🏠 Balcão'
+    case 'painel':             return '🏠 Balcão'  // valor antigo, antes do canal ser escolhido
+    default:                   return c || '—'
+  }
 }
 
 function statusLabel(s) {
@@ -431,6 +446,7 @@ function abrirDetalhes(id) {
       <span><strong style="color:var(--text)">🛵 Entrega:</strong> ${p.tipo_entrega === 'delivery' ? 'Delivery' : 'Retirada'}</span>
       ${p.endereco_entrega ? `<span><strong style="color:var(--text)">📍 Endereço:</strong> ${p.endereco_entrega}</span>` : ''}
       <span><strong style="color:var(--text)">💳 Pagamento:</strong> ${pgtoLabel(p.forma_pagamento)}</span>
+      <span><strong style="color:var(--text)">🔖 Canal:</strong> ${canalLabel(p.canal)}</span>
       ${p.troco_para ? `<span><strong style="color:var(--text)">💵 Troco para:</strong> R$ ${fmt(p.troco_para)}</span>` : ''}
       ${p.observacao ? `<span><strong style="color:var(--text)">📝 Obs:</strong> ${p.observacao}</span>` : ''}
     </div>
@@ -966,8 +982,20 @@ const NP = {
   // Marmitex sendo montada agora (null = nenhuma). Fica fora de NP.itens
   // porque só entra no pedido depois de confirmar as escolhas.
   montando: null,
-  form: { telefone: '', nome: '', endereco: '', tipoEntrega: 'delivery', pagamento: 'pix', trocoPara: '', observacao: '', aplicarCupom: true }
+  form: { telefone: '', nome: '', endereco: '', tipoEntrega: 'delivery', pagamento: 'pix', trocoPara: '', observacao: '', aplicarCupom: true, canal: 'balcao' }
 }
+
+// Canais de origem do pedido — pra medir depois de onde vem cada venda.
+// whatsapp_organico/whatsapp_anuncio/recompra também existem (setados
+// automaticamente pelo agente de atendimento), mas aqui no painel o
+// atendente escolhe manualmente de onde esse pedido específico veio.
+const NP_CANAIS = [
+  { valor: 'balcao', label: '🏠 Balcão' },
+  { valor: 'whatsapp_organico', label: '💬 WhatsApp' },
+  { valor: 'instagram', label: '📸 Instagram' },
+  { valor: 'whatsapp_anuncio', label: '📢 Anúncio' },
+  { valor: 'recompra', label: '🔁 Recompra' },
+]
 
 // Ordem em que as categorias aparecem. Pedida assim: marmitas bem em cima,
 // bebidas embaixo e depois os doces. O que não estiver mapeado cai no meio,
@@ -1014,6 +1042,7 @@ function npCapturarForm() {
   NP.form.endereco = val('np-endereco') ?? NP.form.endereco
   NP.form.tipoEntrega = val('np-tipo-entrega') ?? NP.form.tipoEntrega
   NP.form.pagamento = val('np-pagamento') ?? NP.form.pagamento
+  NP.form.canal = val('np-canal') ?? NP.form.canal
   NP.form.trocoPara = val('np-troco') ?? NP.form.trocoPara
   NP.form.observacao = val('np-observacao') ?? NP.form.observacao
   NP.busca = val('np-busca') ?? NP.busca
@@ -1430,6 +1459,11 @@ function renderNovoPedido() {
             ? `<input type="text" id="np-endereco" class="np-input" placeholder="📍 Endereço de entrega" value="${f.endereco}">`
             : ''}
 
+          <label class="np-label-canal">De onde veio esse pedido?</label>
+          <select id="np-canal" class="np-input" onchange="npCapturarForm()">
+            ${NP_CANAIS.map(c => `<option value="${c.valor}" ${f.canal === c.valor ? 'selected' : ''}>${c.label}</option>`).join('')}
+          </select>
+
           ${npRenderTroco()}
         </div>
 
@@ -1537,7 +1571,8 @@ async function npCriarPedido() {
       })),
       p_observacao: observacao,
       p_cupom_codigo: (f.aplicarCupom && NP.cupom) ? NP.cupom.codigo : null,
-      p_troco_para: trocoPara
+      p_troco_para: trocoPara,
+      p_canal: f.canal || 'balcao'
     })
     if (error) throw error
 
