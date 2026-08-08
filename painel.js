@@ -26,6 +26,12 @@ async function iniciarPainel() {
   await carregarStatusCardapio()
   await carregarAlertas()
   subscribeRealtime()
+
+  // O agente abre a loja sozinho às 11h e fecha depois das 14h. Sem esta
+  // releitura, o painel ficaria a tarde inteira mostrando "Aberta" enquanto o
+  // WhatsApp já estaria respondendo que está fechado — e ninguém entenderia
+  // por quê. 60s é frequente o bastante e custa uma consulta minúscula.
+  setInterval(carregarLojaStatus, 60_000)
 }
 
 async function carregarLojaStatus() {
@@ -567,12 +573,32 @@ function imprimirPedido(id) {
 }
 
 /* ─── LOJA TOGGLE ───────────────────────────────── */
+// Este botão é a CHAVE MESTRA do atendimento automático: o agente do WhatsApp
+// lê `loja_aberta` a cada mensagem. Fechado aqui = ele responde o horário e
+// não monta pedido. Aberto = ele atende, mesmo fora das 11h–14h (é assim que
+// dá pra testar o atendimento de manhã).
+//
+// O agente abre sozinho às 11h e fecha sozinho depois das 14h, então o valor
+// muda sem ninguém clicar — por isso a tela recarrega o estado de tempos em
+// tempos (ver abaixo), senão o botão passaria a tarde mentindo "Aberta".
 async function toggleLoja() {
-  P.lojaAberta = !P.lojaAberta
-  await sb.from('info_restaurante')
-    .update({ valor: P.lojaAberta ? 'true' : 'false' })
+  const novo = !P.lojaAberta
+
+  const { data, error } = await sb.from('info_restaurante')
+    .update({ valor: novo ? 'true' : 'false' })
     .eq('chave', 'loja_aberta')
+    .select('chave')
+
+  if (error || !data?.length) {
+    avisar(`❌ Não consegui ${novo ? 'abrir' : 'fechar'} a loja.\n\n${error?.message || 'O banco não confirmou a alteração.'}`, 'erro')
+    return
+  }
+
+  P.lojaAberta = novo
   atualizarToggleLoja()
+  avisar(novo
+    ? '🟢 Loja ABERTA — o agente do WhatsApp está atendendo.'
+    : '🔴 Loja FECHADA — o agente vai responder o horário e não monta pedido.')
 }
 
 function atualizarToggleLoja() {
