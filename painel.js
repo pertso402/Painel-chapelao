@@ -12,6 +12,7 @@ const FLUXO_STATUS = ['pendente', 'preparando', 'pronto', 'saiu_entrega', 'entre
 const P = {
   pedidos: [],
   alertas: [],
+  taxas: [],
   tabAtiva: 'pendente',
   lojaAberta: true,
   midiaBuffet: null,
@@ -25,7 +26,12 @@ async function iniciarPainel() {
   await carregarMidiaBuffet()
   await carregarStatusCardapio()
   await carregarAlertas()
+  await carregarTaxas()
   subscribeRealtime()
+
+  // O contador de 5 minutos precisa andar sozinho na tela: quem está com o
+  // painel aberto tem que ver o tempo diminuindo, não um número congelado.
+  setInterval(carregarTaxas, 15_000)
 
   // O agente abre a loja sozinho às 11h e fecha depois das 14h. Sem esta
   // releitura, o painel ficaria a tarde inteira mostrando "Aberta" enquanto o
@@ -84,9 +90,13 @@ function subscribeRealtime() {
     .on('postgres_changes', {
       event: 'INSERT', schema: 'public', table: 'atendimento_alertas'
     }, async payload => {
+      const ehTaxa = String(payload.new.motivo || '').startsWith('TAXA DE ENTREGA:')
       tocaSomAlerta()
       await carregarAlertas()
-      notificar(`🆘 ${payload.new.nome_cliente || 'Cliente'} precisa de ajuda!`)
+      await carregarTaxas()
+      notificar(ehTaxa
+        ? `🚴 Calcular entrega de ${payload.new.nome_cliente || 'um cliente'} — 5 min`
+        : `🆘 ${payload.new.nome_cliente || 'Cliente'} precisa de ajuda!`)
     })
     .on('postgres_changes', {
       event: 'UPDATE', schema: 'public', table: 'atendimento_alertas'
@@ -345,9 +355,97 @@ async function carregarAlertas() {
     .eq('status', 'aberto')
     .order('criado_em', { ascending: false })
 
-  P.alertas = data || []
+  // Pedido de cálculo de taxa tem banner próprio, com campo de valor. Se
+  // aparecesse aqui viria com botão "Resolver" e a frase "atendimento pausado",
+  // que é falsa nesse caso — o agente segue conversando enquanto a taxa sai.
+  P.alertas = (data || []).filter(a => !String(a.motivo || '').startsWith('TAXA DE ENTREGA:'))
   renderAlertas()
   atualizarTituloAba()
+}
+
+/* ─── TAXA DE ENTREGA A CALCULAR ────────────────────
+   Cada endereço custa um valor diferente, calculado à mão numa plataforma
+   externa — qual delas depende da forma de pagamento (PIX vai pelo iFood, que
+   chega mais rápido; dinheiro/cartão vai por outra). Por isso o card mostra a
+   forma de pagamento junto do endereço: sem ela não dá pra cotar.
+
+   O relógio importa: se ninguém digitar em 5 minutos, o agente assume o valor
+   padrão e avisa o cliente sozinho, pra ninguém ficar esperando no vácuo.
+
+   A leitura e a escrita passam por RPC (taxas_pendentes / definir_taxa_entrega)
+   porque a chave deste painel é pública: abrir pedido_rascunho exporia endereço
+   e telefone de todo mundo em atendimento para qualquer um. */
+const TAXA_TIMEOUT_MIN = 5
+
+async function carregarTaxas() {
+  const { data, error } = await sb.rpc('taxas_pendentes')
+  if (error) { console.error('taxas_pendentes', error); return }
+  P.taxas = data || []
+  renderTaxas()
+}
+
+function renderTaxas() {
+  const banner = document.getElementById('taxas-banner')
+  if (!banner) return
+  if (!P.taxas?.length) {
+    banner.style.display = 'none'
+    banner.innerHTML = ''
+    return
+  }
+
+  banner.style.display = 'flex'
+  banner.innerHTML = P.taxas.map(t => {
+    const segs = Math.floor((Date.now() - new Date(t.solicitada_em)) / 1000)
+    const restam = TAXA_TIMEOUT_MIN * 60 - segs
+    const prazo = restam > 0
+      ? `⏱ ${Math.floor(restam / 60)}min${String(restam % 60).padStart(2, '0')}s para responder`
+      : '⚠️ prazo estourado — o agente já mandou o valor padrão'
+    const tel = String(t.telefone).replace(/\D/g, '')
+    return `
+      <div class="taxa-card${restam > 0 ? '' : ' estourado'}">
+        <span class="alerta-icone">🚴</span>
+        <div class="alerta-corpo">
+          <div class="alerta-titulo">Calcular entrega — <b>${t.nome_cliente || 'Cliente'}</b> (${t.telefone})</div>
+          <div class="alerta-motivo">📍 ${t.endereco || '(sem endereço)'}</div>
+          <div class="alerta-motivo">💳 Pagamento: <b>${(t.forma_pagamento || '—').toUpperCase()}</b></div>
+          <div class="alerta-tempo">${prazo}</div>
+        </div>
+        <div class="alerta-acoes">
+          <input class="taxa-input" id="taxa-${tel}" type="number" inputmode="decimal"
+                 step="0.5" min="0" placeholder="R$" onkeydown="if(event.key==='Enter')definirTaxa('${tel}')">
+          <button class="btn-alerta resolver" onclick="definirTaxa('${tel}')">✅ Pronto</button>
+        </div>
+      </div>`
+  }).join('')
+}
+
+async function definirTaxa(telefone) {
+  const campo = document.getElementById(`taxa-${telefone}`)
+  const valor = Number(String(campo?.value || '').replace(',', '.'))
+
+  if (!campo?.value.trim() || !Number.isFinite(valor) || valor < 0) {
+    avisar('Digite o valor da entrega (ex: 12,50).', 'erro')
+    campo?.focus()
+    return
+  }
+
+  const { data, error } = await sb.rpc('definir_taxa_entrega', { p_telefone: telefone, p_valor: valor })
+  if (error) {
+    avisar(`Não consegui salvar a taxa: ${error.message}`, 'erro')
+    return
+  }
+  // 0 linhas = o prazo estourou entre abrir a tela e clicar, e o agente já
+  // mandou o valor padrão pro cliente. Mudar agora faria o total contradizer
+  // a mensagem que ele já leu — melhor a pessoa resolver no WhatsApp.
+  if (!data) {
+    avisar('Esse pedido não está mais esperando: o prazo estourou e o valor padrão já foi enviado ao cliente. Fale com ele pelo WhatsApp se precisar ajustar.', 'erro')
+    await carregarTaxas()
+    return
+  }
+
+  avisar('Taxa enviada — o agente já está avisando o cliente. ✅')
+  await carregarTaxas()
+  await carregarAlertas()
 }
 
 function renderAlertas() {

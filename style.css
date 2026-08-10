@@ -875,3 +875,31 @@ body::before {
   white-space: pre-line; box-shadow: var(--shadow-lg);
 }
 .toast-painel.erro { border-color: var(--red-2); background: rgba(224,67,63,.16); }
+
+/* ─── Taxa de entrega a calcular ───────────────────────────────
+   Mesmo formato do alerta de socorro, cor diferente: aqui ninguém está com
+   problema, só falta um número. Vermelho de emergência todo dia dessensibiliza
+   a equipe e o alerta de verdade deixa de ser visto. */
+.taxa-card {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 16px; border-radius: 14px;
+  background: rgba(96,165,250,.10);
+  border: 1px solid rgba(96,165,250,.35);
+}
+/* Prazo estourado: o cliente JÁ recebeu o valor padrão. Vira aviso, não pedido. */
+.taxa-card.estourado {
+  background: rgba(248,113,113,.10);
+  border-color: rgba(248,113,113,.40);
+}
+.taxa-input {
+  width: 90px; padding: 9px 10px; border-radius: 10px;
+  font-size: 1rem; font-weight: 700; text-align: right;
+  background: rgba(0,0,0,.30); color: #fff;
+  border: 1px solid rgba(255,255,255,.22);
+}
+.taxa-input:focus { outline: none; border-color: rgba(96,165,250,.8); }
+@media (max-width: 720px) {
+  .taxa-card { flex-wrap: wrap; }
+  .taxa-card .alerta-acoes { width: 100%; }
+  .taxa-input { flex: 1; width: auto; }
+}
