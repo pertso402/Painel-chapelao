@@ -91,7 +91,9 @@ function subscribeRealtime() {
       event: 'INSERT', schema: 'public', table: 'atendimento_alertas'
     }, async payload => {
       const ehTaxa = String(payload.new.motivo || '').startsWith('TAXA DE ENTREGA:')
-      tocaSomAlerta()
+      // Taxa tem alarme próprio, disparado por carregarTaxas — tocar os dois
+      // ao mesmo tempo vira barulho indistinguível.
+      if (!ehTaxa) tocaSomAlerta()
       await carregarAlertas()
       await carregarTaxas()
       notificar(ehTaxa
@@ -106,9 +108,86 @@ function subscribeRealtime() {
     .subscribe()
 }
 
+/* ─── ÁUDIO ─────────────────────────────────────────
+   O navegador só deixa tocar som depois que alguém clicou em alguma coisa na
+   página (política de autoplay). Num painel que fica aberto o dia inteiro numa
+   TV ou num PC do balcão, isso significa alarme mudo sem ninguém perceber —
+   por isso o contexto é criado uma vez, destravado no primeiro clique/tecla, e
+   o painel AVISA na tela enquanto o som estiver bloqueado. */
+let audioCtx = null
+function getAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+  if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {})
+  return audioCtx
+}
+
+function destravarAudio() {
+  getAudio()
+  atualizarAvisoDeSom()
+}
+document.addEventListener('click', destravarAudio)
+document.addEventListener('keydown', destravarAudio)
+
+function somDestravado() {
+  return !!audioCtx && audioCtx.state === 'running'
+}
+
+function atualizarAvisoDeSom() {
+  const el = document.getElementById('aviso-som')
+  if (!el) return
+  // Só cobra o clique quando existe alarme tocando: fora disso é ruído visual.
+  el.style.display = (!somDestravado() && P.taxas?.length) ? 'block' : 'none'
+}
+
+/* Bipe genérico: um oscilador, uma frequência, uma duração. */
+function bipe(freq, inicio, duracao, volume = 0.3, tipo = 'sine') {
+  const ctx = getAudio()
+  const osc = ctx.createOscillator()
+  const gain = ctx.createGain()
+  osc.connect(gain)
+  gain.connect(ctx.destination)
+  osc.type = tipo
+  osc.frequency.setValueAtTime(freq, ctx.currentTime + inicio)
+  gain.gain.setValueAtTime(volume, ctx.currentTime + inicio)
+  gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + inicio + duracao)
+  osc.start(ctx.currentTime + inicio)
+  osc.stop(ctx.currentTime + inicio + duracao)
+}
+
+/* Som da taxa de entrega: sirene de dois tons, alta e insistente. É o único
+   alarme do painel que cobra uma AÇÃO com prazo (5 minutos), então precisa
+   soar diferente de pedido novo e de pedido de socorro — quem está na cozinha
+   tem que saber o que fazer só de ouvir, sem olhar a tela. */
+function tocaSomTaxa() {
+  try {
+    for (let i = 0; i < 4; i++) {
+      bipe(988, i * 0.34, 0.16, 0.35, 'triangle')  // si
+      bipe(1319, i * 0.34 + 0.17, 0.16, 0.35, 'triangle')  // mi agudo
+    }
+  } catch (e) {}
+}
+
+/* Enquanto houver taxa esperando, o alarme REPETE. Tocar uma vez só não
+   resolve: a atendente pode estar servindo o buffet quando o pedido chega, e
+   o cliente fica esperando o valor da entrega. Para sozinho quando a fila
+   zera — ninguém precisa "desligar o alarme". */
+let alarmeTaxaTimer = null
+function sincronizarAlarmeDeTaxa() {
+  const temFila = !!P.taxas?.length
+
+  if (temFila && !alarmeTaxaTimer) {
+    tocaSomTaxa()
+    alarmeTaxaTimer = setInterval(tocaSomTaxa, 20_000)
+  } else if (!temFila && alarmeTaxaTimer) {
+    clearInterval(alarmeTaxaTimer)
+    alarmeTaxaTimer = null
+  }
+  atualizarAvisoDeSom()
+}
+
 function tocaSom() {
   try {
-    const ctx = new AudioContext()
+    const ctx = getAudio()
     const osc = ctx.createOscillator()
     const gain = ctx.createGain()
     osc.connect(gain)
@@ -127,7 +206,7 @@ function tocaSom() {
    agudos em vez de 1 sequência curta), pra ninguém confundir os dois. */
 function tocaSomAlerta() {
   try {
-    const ctx = new AudioContext()
+    const ctx = getAudio()
     const tempos = [0, 0.28, 0.56]
     tempos.forEach(t => {
       const osc = ctx.createOscillator()
@@ -382,6 +461,7 @@ async function carregarTaxas() {
   if (error) { console.error('taxas_pendentes', error); return }
   P.taxas = data || []
   renderTaxas()
+  sincronizarAlarmeDeTaxa()
 }
 
 function renderTaxas() {

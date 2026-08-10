@@ -903,3 +903,13 @@ body::before {
   .taxa-card .alerta-acoes { width: 100%; }
   .taxa-input { flex: 1; width: auto; }
 }
+
+/* Aviso de som bloqueado — so aparece quando existe alarme tocando e o
+   navegador ainda nao liberou audio. Painel mudo o dia inteiro sem ninguem
+   saber e pior que nao ter alarme. */
+.aviso-som {
+  margin: 0 16px 10px; padding: 12px 16px; border-radius: 12px;
+  background: rgba(250,204,21,.14); border: 1px solid rgba(250,204,21,.45);
+  color: #FDE68A; font-size: .95rem; cursor: pointer; text-align: center;
+}
+.aviso-som:hover { background: rgba(250,204,21,.22); }
