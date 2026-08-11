@@ -716,13 +716,23 @@ function imprimirPedido(id) {
          continuar até o conteúdo acabar, em vez de forçar altura fixa. */
       @page { size: ${LARGURA_PAPEL_TERMICO} auto; margin: 0; }
       * { box-sizing: border-box; }
+      /* Impressora térmica ESC/POS recebe o texto como imagem rasterizada
+         pelo driver do Windows. Cinza-antialiasado vira ponto falhado no
+         papel — por isso tudo aqui é preto puro e em negrito (traço mais
+         grosso segura melhor no rolo), nunca peso normal/fino. */
+      html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
       body {
         font-family: 'Courier New', monospace;
-        font-size: 12px;
-        line-height: 1.4;
+        font-weight: bold;
+        font-size: 13px;
+        line-height: 1.45;
         width: ${LARGURA_PAPEL_TERMICO};
         margin: 0;
         padding: 6px 8px;
+        color: #000;
+        background: #fff;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
       }
       h2 { text-align: center; font-size: 14px; margin: 4px 0; }
       p { margin: 3px 0; word-wrap: break-word; }
@@ -1160,7 +1170,7 @@ const NP = {
   // Marmitex sendo montada agora (null = nenhuma). Fica fora de NP.itens
   // porque só entra no pedido depois de confirmar as escolhas.
   montando: null,
-  form: { telefone: '', nome: '', endereco: '', tipoEntrega: 'delivery', pagamento: 'pix', trocoPara: '', observacao: '', aplicarCupom: true, canal: 'balcao' }
+  form: { telefone: '', nome: '', endereco: '', tipoEntrega: 'delivery', pagamento: 'pix', trocoPara: '', observacao: '', aplicarCupom: true, canal: 'balcao', taxaEntrega: '' }
 }
 
 // Canais de origem do pedido — pra medir depois de onde vem cada venda.
@@ -1221,6 +1231,7 @@ function npCapturarForm() {
   NP.form.tipoEntrega = val('np-tipo-entrega') ?? NP.form.tipoEntrega
   NP.form.pagamento = val('np-pagamento') ?? NP.form.pagamento
   NP.form.canal = val('np-canal') ?? NP.form.canal
+  NP.form.taxaEntrega = val('np-taxa-entrega') ?? NP.form.taxaEntrega
   NP.form.trocoPara = val('np-troco') ?? NP.form.trocoPara
   NP.form.observacao = val('np-observacao') ?? NP.form.observacao
   NP.busca = val('np-busca') ?? NP.busca
@@ -1238,7 +1249,7 @@ async function abrirNovoPedido() {
   NP.clienteId = null
   NP.montando = null
   NP.busca = ''
-  NP.form = { telefone: '', nome: '', endereco: '', tipoEntrega: 'delivery', pagamento: 'pix', trocoPara: '', observacao: '', aplicarCupom: true }
+  NP.form = { telefone: '', nome: '', endereco: '', tipoEntrega: 'delivery', pagamento: 'pix', trocoPara: '', observacao: '', aplicarCupom: true, canal: 'balcao', taxaEntrega: '' }
 
   if (!NP.produtos.length) {
     const { data, error } = await sb.from('produtos')
@@ -1398,11 +1409,14 @@ function npRemoverItem(idx) {
 /* ─── TOTAIS ─────────────────────────────────────── */
 // Calculados na tela SÓ para conferência visual. Quem manda no valor gravado
 // é painel_criar_pedido no banco — a tela nunca envia preço nem total.
-const NP_TAXA_ENTREGA = 11
-
+// Taxa de entrega é digitada pelo atendente (varia por bairro); sem valor
+// digitado, o banco usa o padrão cadastrado em info_restaurante.
 function npTotais() {
   const subtotal = NP.itens.reduce((s, i) => s + i.preco * i.quantidade, 0)
-  const taxa = NP.form.tipoEntrega === 'delivery' ? NP_TAXA_ENTREGA : 0
+  const taxaDigitada = Number(String(NP.form.taxaEntrega).replace(',', '.'))
+  const taxa = NP.form.tipoEntrega === 'delivery'
+    ? (Number.isFinite(taxaDigitada) && String(NP.form.taxaEntrega).trim() ? taxaDigitada : 0)
+    : 0
   const usarCupom = NP.form.aplicarCupom && NP.cupom
   const desconto = (usarCupom && NP.cupom.tipo !== 'brinde')
     ? Math.round(subtotal * (Number(NP.cupom.desconto_percentual) || 0)) / 100
@@ -1603,6 +1617,13 @@ function npAtualizarTroco() {
   else alvo.innerHTML = `<span class="np-troco-ok">✅ Levar R$ ${fmt(levar)} de troco.</span>`
 }
 
+function npAtualizarCarrinho() {
+  const alvo = document.getElementById('np-bloco-carrinho')
+  if (!alvo) return
+  alvo.innerHTML = `<h3 class="np-subtitulo">🧾 Pedido</h3>${npRenderCarrinho()}`
+  npAtualizarTroco()
+}
+
 function renderNovoPedido() {
   const card = document.getElementById('modal-novo-pedido-card')
   const f = NP.form
@@ -1634,7 +1655,9 @@ function renderNovoPedido() {
           </div>
 
           ${f.tipoEntrega === 'delivery'
-            ? `<input type="text" id="np-endereco" class="np-input" placeholder="📍 Endereço de entrega" value="${f.endereco}">`
+            ? `<input type="text" id="np-endereco" class="np-input" placeholder="📍 Endereço de entrega" value="${f.endereco}">
+               <input type="text" id="np-taxa-entrega" class="np-input" placeholder="💰 Taxa de entrega (R$)" inputmode="decimal"
+                      value="${f.taxaEntrega}" oninput="npCapturarForm(); npAtualizarCarrinho()">`
             : ''}
 
           <label class="np-label-canal">De onde veio esse pedido?</label>
@@ -1645,7 +1668,7 @@ function renderNovoPedido() {
           ${npRenderTroco()}
         </div>
 
-        <div class="np-bloco np-bloco-carrinho">
+        <div class="np-bloco np-bloco-carrinho" id="np-bloco-carrinho">
           <h3 class="np-subtitulo">🧾 Pedido</h3>
           ${npRenderCarrinho()}
         </div>
@@ -1731,6 +1754,12 @@ async function npCriarPedido() {
     if (trocoPara < npTotais().total) { erro.textContent = 'O valor do troco é menor que o total do pedido.'; return }
   }
 
+  let taxaEntrega = null
+  if (f.tipoEntrega === 'delivery' && String(f.taxaEntrega).trim()) {
+    taxaEntrega = Number(String(f.taxaEntrega).replace(',', '.'))
+    if (!Number.isFinite(taxaEntrega) || taxaEntrega < 0) { erro.textContent = 'Valor da taxa de entrega inválido.'; return }
+  }
+
   btn.disabled = true
   btn.textContent = '⏳ Criando...'
 
@@ -1750,7 +1779,8 @@ async function npCriarPedido() {
       p_observacao: observacao,
       p_cupom_codigo: (f.aplicarCupom && NP.cupom) ? NP.cupom.codigo : null,
       p_troco_para: trocoPara,
-      p_canal: f.canal || 'balcao'
+      p_canal: f.canal || 'balcao',
+      p_taxa_entrega: taxaEntrega
     })
     if (error) throw error
 
