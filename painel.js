@@ -1617,11 +1617,133 @@ function npAtualizarTroco() {
   else alvo.innerHTML = `<span class="np-troco-ok">✅ Levar R$ ${fmt(levar)} de troco.</span>`
 }
 
-function npAtualizarCarrinho() {
+function npAtualizarCarrinho(statusHtml) {
   const alvo = document.getElementById('np-bloco-carrinho')
   if (!alvo) return
-  alvo.innerHTML = `<h3 class="np-subtitulo">🧾 Pedido</h3>${npRenderCarrinho()}`
+  if (statusHtml === undefined) statusHtml = document.getElementById('np-itens-status')?.innerHTML || ''
+  alvo.innerHTML = `
+    <div class="np-carrinho-cabeca">
+      <h3 class="np-subtitulo">🧾 Pedido</h3>
+      <button type="button" class="np-mic np-mic-itens" id="np-mic-itens" onclick="npGravar('itens','np-mic-itens')" title="Falar os itens do pedido">🎙️ Itens por voz</button>
+    </div>
+    <div id="np-itens-status">${statusHtml}</div>
+    ${npRenderCarrinho()}`
   npAtualizarTroco()
+}
+
+/* ─── PEDIDO POR VOZ ─────────────────────────────────
+   Gravação em PARTES (um campo de cada vez), não um áudio único com tudo —
+   isso é o que faz o atendente ganhar velocidade: clica no 🎙️ do campo,
+   fala só aquilo, solta, o campo já preenche e ele segue pro próximo.
+   Cada botão grava e transcreve de forma independente; não trava a tela
+   enquanto processa (só desabilita o próprio botão). */
+let npMediaRecorder = null
+let npAudioChunks = []
+let npGravandoCampo = null
+
+async function npGravar(campo, btnId) {
+  const btn = document.getElementById(btnId)
+  if (!btn) return
+
+  // Clicou de novo no mesmo botão enquanto gravava → é o "soltar", para e envia.
+  if (npMediaRecorder && npMediaRecorder.state === 'recording') {
+    if (npGravandoCampo === campo) npMediaRecorder.stop()
+    return
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    npAudioChunks = []
+    npGravandoCampo = campo
+    npMediaRecorder = new MediaRecorder(stream)
+    npMediaRecorder.ondataavailable = e => { if (e.data.size) npAudioChunks.push(e.data) }
+    npMediaRecorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop())
+      const tipo = npMediaRecorder.mimeType || 'audio/webm'
+      btn.disabled = true
+      btn.classList.remove('gravando')
+      btn.textContent = '⏳'
+      try {
+        await npProcessarAudio(new Blob(npAudioChunks, { type: tipo }), tipo, campo)
+      } finally {
+        btn.disabled = false
+        npAtualizarBotaoMic(btn, campo)
+        npGravandoCampo = null
+        npMediaRecorder = null
+      }
+    }
+    npMediaRecorder.start()
+    btn.classList.add('gravando')
+    btn.textContent = '⏹️'
+  } catch (e) {
+    avisar('Não consegui acessar o microfone: ' + e.message, 'erro')
+  }
+}
+
+function npAtualizarBotaoMic(btn, campo) {
+  btn.textContent = campo === 'itens' ? '🎙️ Itens por voz' : '🎙️'
+}
+
+function npBlobParaBase64(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onloadend = () => resolve(String(reader.result).split(',')[1] || '')
+    reader.onerror = reject
+    reader.readAsDataURL(blob)
+  })
+}
+
+async function npProcessarAudio(blob, mimetype, campo) {
+  const audio = await npBlobParaBase64(blob)
+  const body = { audio, mimetype, campo }
+  if (campo === 'itens') {
+    body.produtos = NP.produtos.map(p => ({ id: p.id, nome: p.nome, categoria: p.categoria }))
+  }
+
+  let resp, data
+  try {
+    resp = await fetch('/api/transcrever', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    data = await resp.json()
+  } catch (e) {
+    avisar('Falha ao enviar o áudio: ' + e.message, 'erro')
+    return
+  }
+  if (!resp.ok) {
+    avisar('Não entendi o áudio: ' + (data.error || resp.status), 'erro')
+    return
+  }
+
+  if (campo === 'nome') {
+    NP.form.nome = (data.transcript || '').trim()
+    const el = document.getElementById('np-nome'); if (el) el.value = NP.form.nome
+  } else if (campo === 'telefone') {
+    NP.form.telefone = (data.transcript || '').replace(/\D/g, '')
+    const el = document.getElementById('np-telefone'); if (el) el.value = NP.form.telefone
+    if (NP.form.telefone) npBuscarCliente()
+  } else if (campo === 'endereco') {
+    NP.form.endereco = (data.transcript || '').trim()
+    const el = document.getElementById('np-endereco'); if (el) el.value = NP.form.endereco
+  } else if (campo === 'itens') {
+    const adicionados = []
+    for (const it of (data.itens || [])) {
+      const prod = NP.produtos.find(p => p.id === it.produto_id)
+      if (!prod) continue
+      // Marmitex tem regra de montagem (limite de carnes/acompanhamentos) —
+      // por voz só dá pra capturar o recheio como observação livre; quem
+      // confere é o atendente, olhando o item no carrinho antes de fechar.
+      NP.itens.push({ produto_id: prod.id, nome: prod.nome, preco: precoProduto(prod), quantidade: it.quantidade, observacao: it.observacao || null })
+      adicionados.push(`${it.quantidade}x ${prod.nome}`)
+    }
+    const partes = []
+    if (adicionados.length) partes.push(`✅ Adicionado: ${adicionados.join(', ')}`)
+    if (data.naoEncontrados?.length) partes.push(`⚠️ Não achei no cardápio: ${data.naoEncontrados.join(', ')}`)
+    if (!adicionados.length && !data.naoEncontrados?.length) partes.push(`❔ Não identifiquei nenhum item em: "${data.transcript}"`)
+    npAtualizarCarrinho(`<p class="np-audio-status">${partes.join(' · ')}</p>`)
+  }
 }
 
 function renderNovoPedido() {
@@ -1638,9 +1760,15 @@ function renderNovoPedido() {
       <!-- COLUNA ESQUERDA: cliente + carrinho -->
       <div class="np-col-esq">
         <div class="np-bloco">
-          <input type="text" id="np-telefone" class="np-input" placeholder="📱 Telefone (com DDD)" inputmode="tel" value="${f.telefone}">
+          <div class="np-campo-audio">
+            <input type="text" id="np-telefone" class="np-input" placeholder="📱 Telefone (com DDD)" inputmode="tel" value="${f.telefone}">
+            <button type="button" class="np-mic" id="np-mic-telefone" onclick="npGravar('telefone','np-mic-telefone')" title="Falar o telefone">🎙️</button>
+          </div>
           <div id="np-cupom-aviso">${npAvisoCupomHtml()}</div>
-          <input type="text" id="np-nome" class="np-input" placeholder="👤 Nome do cliente" value="${f.nome}">
+          <div class="np-campo-audio">
+            <input type="text" id="np-nome" class="np-input" placeholder="👤 Nome do cliente" value="${f.nome}">
+            <button type="button" class="np-mic" id="np-mic-nome" onclick="npGravar('nome','np-mic-nome')" title="Falar o nome">🎙️</button>
+          </div>
 
           <div class="np-linha2">
             <select id="np-tipo-entrega" class="np-input" onchange="npCapturarForm(); renderNovoPedido()">
@@ -1655,7 +1783,10 @@ function renderNovoPedido() {
           </div>
 
           ${f.tipoEntrega === 'delivery'
-            ? `<input type="text" id="np-endereco" class="np-input" placeholder="📍 Endereço de entrega" value="${f.endereco}">
+            ? `<div class="np-campo-audio">
+                 <input type="text" id="np-endereco" class="np-input" placeholder="📍 Endereço de entrega" value="${f.endereco}">
+                 <button type="button" class="np-mic" id="np-mic-endereco" onclick="npGravar('endereco','np-mic-endereco')" title="Falar o endereço">🎙️</button>
+               </div>
                <input type="text" id="np-taxa-entrega" class="np-input" placeholder="💰 Taxa de entrega (R$)" inputmode="decimal"
                       value="${f.taxaEntrega}" oninput="npCapturarForm(); npAtualizarCarrinho()">`
             : ''}
@@ -1669,7 +1800,11 @@ function renderNovoPedido() {
         </div>
 
         <div class="np-bloco np-bloco-carrinho" id="np-bloco-carrinho">
-          <h3 class="np-subtitulo">🧾 Pedido</h3>
+          <div class="np-carrinho-cabeca">
+            <h3 class="np-subtitulo">🧾 Pedido</h3>
+            <button type="button" class="np-mic np-mic-itens" id="np-mic-itens" onclick="npGravar('itens','np-mic-itens')" title="Falar os itens do pedido">🎙️ Itens por voz</button>
+          </div>
+          <div id="np-itens-status"></div>
           ${npRenderCarrinho()}
         </div>
 
