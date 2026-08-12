@@ -1162,6 +1162,7 @@ const NP = {
   itens: [],
   cupom: null,
   clienteId: null,
+  clienteAchado: null,
   categoriaAtiva: null,
   busca: '',
   // Cardápio do dia (carnes/acompanhamentos ativos hoje), carregado sob
@@ -1247,6 +1248,7 @@ async function abrirNovoPedido() {
   NP.itens = []
   NP.cupom = null
   NP.clienteId = null
+  NP.clienteAchado = null
   NP.montando = null
   NP.busca = ''
   NP.form = { telefone: '', nome: '', endereco: '', tipoEntrega: 'delivery', pagamento: 'pix', trocoPara: '', observacao: '', aplicarCupom: true, canal: 'balcao', taxaEntrega: '' }
@@ -1764,6 +1766,7 @@ function renderNovoPedido() {
             <input type="text" id="np-telefone" class="np-input" placeholder="📱 Telefone (com DDD)" inputmode="tel" value="${f.telefone}">
             <button type="button" class="np-mic" id="np-mic-telefone" onclick="npGravar('telefone','np-mic-telefone')" title="Falar o telefone">🎙️</button>
           </div>
+          <div id="np-cliente-achado">${npAvisoClienteHtml()}</div>
           <div id="np-cupom-aviso">${npAvisoCupomHtml()}</div>
           <div class="np-campo-audio">
             <input type="text" id="np-nome" class="np-input" placeholder="👤 Nome do cliente" value="${f.nome}">
@@ -1824,6 +1827,12 @@ function renderNovoPedido() {
   if (tel) tel.addEventListener('blur', npBuscarCliente)
 }
 
+// Busca o cliente pelo telefone assim que a pessoa sai do campo. Vai por RPC
+// (painel_buscar_cliente) e não por .eq('telefone'): o agente grava o número
+// como o WhatsApp entrega (554488644949) e aqui a equipe digita como quiser
+// (4488644949, com máscara, sem DDI). Comparando texto cru, o cliente nunca
+// era encontrado e cada pedido manual criava um cadastro NOVO — o histórico
+// da pessoa ficava partido em dois. A RPC casa por DDD + 8 dígitos finais.
 async function npBuscarCliente() {
   npCapturarForm()
   const telefone = NP.form.telefone.replace(/\D/g, '')
@@ -1831,10 +1840,13 @@ async function npBuscarCliente() {
   NP.cupom = null
   NP.clienteId = null
   if (avisoEl) avisoEl.innerHTML = ''
-  if (!telefone) return
+  if (!telefone) { npMostrarClienteAchado(null); return }
 
-  const { data: cliente } = await sb.from('clientes')
-    .select('id, nome, endereco').eq('telefone', telefone).maybeSingle()
+  const { data, error } = await sb.rpc('painel_buscar_cliente', { p_telefone: telefone })
+  if (error) console.error('painel_buscar_cliente', error)
+  const cliente = Array.isArray(data) ? data[0] : data
+
+  npMostrarClienteAchado(cliente || null)
 
   if (cliente) {
     NP.clienteId = cliente.id
@@ -1848,12 +1860,32 @@ async function npBuscarCliente() {
     }
   }
 
-  const { data: cupom } = await sb.rpc('painel_cupom_ativo_por_telefone', { p_telefone: telefone })
+  // O cupom é procurado pelo telefone JÁ NORMALIZADO do cadastro encontrado —
+  // procurar pelo que foi digitado erraria pelo mesmo motivo de antes.
+  const telParaCupom = cliente?.telefone || telefone
+  const { data: cupom } = await sb.rpc('painel_cupom_ativo_por_telefone', { p_telefone: telParaCupom })
   if (cupom) {
     NP.cupom = cupom
     NP.form.aplicarCupom = true
     if (avisoEl) avisoEl.innerHTML = npAvisoCupomHtml()
   }
+}
+
+// Deixa explícito na tela se o pedido vai pra um cadastro que já existe ou se
+// vai criar um novo — sem isso ninguém percebe quando o número foi digitado
+// errado e um cliente antigo "vira" cliente novo.
+function npMostrarClienteAchado(cliente) {
+  // Guarda no estado (e não só no DOM) pra sobreviver aos re-renders do modal:
+  // trocar entrega/pagamento redesenha o formulário inteiro.
+  NP.clienteAchado = cliente || null
+  const el = document.getElementById('np-cliente-achado')
+  if (el) el.innerHTML = npAvisoClienteHtml()
+}
+
+function npAvisoClienteHtml() {
+  const c = NP.clienteAchado
+  if (!c) return ''
+  return `<span class="np-cliente-achado">✅ Cliente já cadastrado: <b>${c.nome || 'sem nome'}</b> — o pedido entra no histórico dele.</span>`
 }
 
 function fecharNovoPedido() {
