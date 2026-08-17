@@ -1007,3 +1007,40 @@ body::before {
   .ed-grid { grid-template-columns: 1fr; }
   .ed-item-obs { min-width: 100%; order: 3; }
 }
+
+/* ─── Relatorio de vendas ─────────────────────────────────────────────── */
+.rel-datas { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--text-muted); }
+.rel-datas label { display: flex; align-items: center; gap: 6px; }
+.rel-datas input { padding: 6px 9px; font-size: 12.5px; width: auto; }
+
+/* O numero que o dono abriu o painel pra ver. Tem que ser o maior da tela. */
+.rel-destaque { background: var(--bg-card2); border: 1px solid rgba(250,204,21,.35);
+  border-radius: 14px; padding: 18px; display: flex; flex-direction: column;
+  align-items: center; gap: 2px; text-align: center; }
+.rel-destaque-label { font-size: 11.5px; font-weight: 800; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--text-muted); }
+.rel-destaque-valor { font-size: 34px; font-weight: 900; color: var(--amarelo); line-height: 1.15; }
+.rel-destaque-sub { font-size: 12.5px; color: var(--text-muted); }
+
+.rel-linhas { display: flex; flex-direction: column; gap: 5px; font-size: 13px; color: var(--text-muted); }
+.rel-linhas > div { display: flex; justify-content: space-between; }
+.rel-linhas .rel-cancelado { color: #FCA5A5; }
+
+.rel-canal { display: flex; flex-direction: column; gap: 5px; padding: 10px 12px;
+  background: var(--bg-card2); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 8px; }
+.rel-canal-topo { display: flex; justify-content: space-between; gap: 10px; }
+.rel-canal-nome { font-weight: 800; font-size: 13.5px; }
+.rel-canal-valor { font-weight: 900; color: var(--amarelo); white-space: nowrap; }
+.rel-canal-sub { font-size: 11.5px; color: var(--text-muted); }
+/* Barra proporcional: mostra de relance qual canal sustenta o faturamento,
+   sem a pessoa ter que comparar numeros de cabeca. */
+.rel-barra { height: 6px; border-radius: 99px; background: rgba(255,255,255,.08); overflow: hidden; }
+.rel-barra-fill { height: 100%; background: var(--gold-grad); border-radius: 99px; }
+
+.rel-itens { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; }
+.rel-item { display: flex; align-items: center; gap: 10px; padding: 7px 10px;
+  border-radius: 8px; font-size: 13px; }
+.rel-item:nth-child(odd) { background: rgba(255,255,255,.035); }
+.rel-item-qtd { font-weight: 900; color: var(--amarelo); min-width: 34px; }
+.rel-item-nome { flex: 1; }
+.rel-item-total { font-weight: 700; white-space: nowrap; }

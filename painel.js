@@ -1061,6 +1061,208 @@ document.getElementById('modal-editar').addEventListener('click', e => {
   if (e.target === document.getElementById('modal-editar')) fecharEditor()
 })
 
+/* ═══ RELATÓRIO DE VENDAS ════════════════════════════
+   Quanto entrou no dia, quebrado por canal de origem, com os itens vendidos.
+
+   ⚠️ A senha aqui é uma TRANCA DE GAVETA, não um cofre. Ela evita que
+   qualquer um que passe pelo balcão veja o faturamento na tela — e é só isso.
+   Este painel é uma página pública e a chave do banco vai no próprio arquivo,
+   então quem souber mexer consegue os números sem passar por aqui. Para
+   proteção de verdade seria preciso login (Supabase Auth) e regras por
+   usuário no banco.
+
+   A soma é feita pelo banco, não somando o que está na tela: o painel só
+   carrega os 400 pedidos mais recentes (truncaria o relatório em silêncio) e
+   a virada do dia tem que ser no fuso do restaurante — somando em UTC, tudo
+   vendido depois das 21h cairia no dia seguinte. */
+const SENHA_VENDAS = '0402'
+
+const REL = { liberado: false, inicio: null, fim: null, dados: null, carregando: false }
+
+function hojeLocalISO() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date())
+}
+
+function diasAtrasISO(n) {
+  const d = new Date(`${hojeLocalISO()}T12:00:00`)
+  d.setDate(d.getDate() - n)
+  return d.toISOString().slice(0, 10)
+}
+
+function abrirVendas() {
+  // Liberado uma vez por aba: pedir a senha a cada olhada faria a equipe
+  // deixar anotada do lado do computador.
+  REL.liberado = sessionStorage.getItem('vendas_ok') === '1'
+  if (!REL.inicio) { REL.inicio = hojeLocalISO(); REL.fim = hojeLocalISO() }
+
+  document.getElementById('modal-vendas').classList.add('open')
+  if (REL.liberado) carregarVendas()
+  else renderVendas()
+}
+
+function fecharVendas() {
+  document.getElementById('modal-vendas').classList.remove('open')
+}
+
+function conferirSenhaVendas() {
+  const campo = document.getElementById('rel-senha')
+  const digitada = (campo?.value || '').trim()
+  if (digitada !== SENHA_VENDAS) {
+    document.getElementById('rel-senha-erro').textContent = 'Senha incorreta.'
+    if (campo) { campo.value = ''; campo.focus() }
+    return
+  }
+  sessionStorage.setItem('vendas_ok', '1')
+  REL.liberado = true
+  carregarVendas()
+}
+
+function periodoVendas(inicio, fim) {
+  REL.inicio = inicio
+  REL.fim = fim || inicio
+  carregarVendas()
+}
+
+async function carregarVendas() {
+  REL.carregando = true
+  renderVendas()
+  const { data, error } = await sb.rpc('painel_relatorio_vendas', {
+    p_inicio: REL.inicio, p_fim: REL.fim,
+  })
+  REL.carregando = false
+  if (error) {
+    REL.dados = null
+    document.getElementById('modal-vendas-card').innerHTML =
+      `<p style="padding:20px;color:var(--red-2)">Erro ao carregar o relatório: ${error.message}</p>
+       <div class="ed-rodape"><button class="btn-status" onclick="fecharVendas()">Fechar</button></div>`
+    return
+  }
+  REL.dados = data
+  renderVendas()
+}
+
+function renderVendas() {
+  const card = document.getElementById('modal-vendas-card')
+
+  if (!REL.liberado) {
+    card.innerHTML = `
+      <div class="ed-cabecalho">
+        <h2>🔒 Vendas do dia</h2>
+        <button class="btn-sair" onclick="fecharVendas()">✕ Fechar</button>
+      </div>
+      <p style="font-size:13px;color:var(--text-muted)">Digite a senha para ver o faturamento.</p>
+      <input id="rel-senha" class="np-input" type="password" inputmode="numeric" autocomplete="off"
+             placeholder="senha" onkeydown="if(event.key==='Enter')conferirSenhaVendas()">
+      <p class="ed-erro" id="rel-senha-erro"></p>
+      <div class="ed-rodape">
+        <button class="btn-status" onclick="fecharVendas()">Cancelar</button>
+        <button class="btn-salvar" onclick="conferirSenhaVendas()">Entrar</button>
+      </div>`
+    setTimeout(() => document.getElementById('rel-senha')?.focus(), 50)
+    return
+  }
+
+  const d = REL.dados
+  const hoje = hojeLocalISO()
+  const botao = (label, ini, fim) => `
+    <button class="np-cat ${REL.inicio === ini && REL.fim === (fim || ini) ? 'ativa' : ''}"
+            onclick="periodoVendas('${ini}','${fim || ini}')">${label}</button>`
+
+  const filtros = `
+    <div class="np-cats">
+      ${botao('Hoje', hoje)}
+      ${botao('Ontem', diasAtrasISO(1))}
+      ${botao('7 dias', diasAtrasISO(6), hoje)}
+      ${botao('30 dias', diasAtrasISO(29), hoje)}
+    </div>
+    <div class="rel-datas">
+      <label>De <input type="date" class="np-input" value="${REL.inicio}"
+             onchange="periodoVendas(this.value,'${REL.fim}')"></label>
+      <label>até <input type="date" class="np-input" value="${REL.fim}"
+             onchange="periodoVendas('${REL.inicio}',this.value)"></label>
+    </div>`
+
+  if (REL.carregando || !d) {
+    card.innerHTML = `
+      <div class="ed-cabecalho"><h2>📊 Vendas</h2>
+        <button class="btn-sair" onclick="fecharVendas()">✕ Fechar</button></div>
+      ${filtros}
+      <p style="padding:24px;text-align:center;color:var(--text-muted)">⏳ Somando...</p>`
+    return
+  }
+
+  const canais = (d.canais || []).map(c => {
+    const fatia = d.total > 0 ? Math.round((c.total / d.total) * 100) : 0
+    return `
+      <div class="rel-canal">
+        <div class="rel-canal-topo">
+          <span class="rel-canal-nome">${canalLabel(c.canal)}</span>
+          <span class="rel-canal-valor">R$ ${fmt(c.total)}</span>
+        </div>
+        <div class="rel-barra"><div class="rel-barra-fill" style="width:${fatia}%"></div></div>
+        <div class="rel-canal-sub">
+          ${fatia}% · ${c.pedidos} ${c.pedidos === 1 ? 'pedido' : 'pedidos'} ·
+          ticket médio R$ ${fmt(c.ticket_medio)} · taxa R$ ${fmt(c.taxa)}
+        </div>
+      </div>`
+  }).join('') || '<p class="np-vazio">Nenhuma venda no período.</p>'
+
+  const itens = (d.itens || []).map(i => `
+    <div class="rel-item">
+      <span class="rel-item-qtd">${i.quantidade}x</span>
+      <span class="rel-item-nome">${String(i.nome_produto).trim()}</span>
+      <span class="rel-item-total">R$ ${fmt(i.total)}</span>
+    </div>`).join('') || '<p class="np-vazio">Nenhum item vendido.</p>'
+
+  const mesmoDia = REL.inicio === REL.fim
+  const titulo = mesmoDia
+    ? new Date(`${REL.inicio}T12:00:00`).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+    : `${new Date(`${REL.inicio}T12:00:00`).toLocaleDateString('pt-BR')} a ${new Date(`${REL.fim}T12:00:00`).toLocaleDateString('pt-BR')}`
+
+  card.innerHTML = `
+    <div class="ed-cabecalho">
+      <h2>📊 Vendas — ${titulo}</h2>
+      <button class="btn-sair" onclick="fecharVendas()">✕ Fechar</button>
+    </div>
+
+    ${filtros}
+
+    <div class="rel-destaque">
+      <span class="rel-destaque-label">Total vendido</span>
+      <span class="rel-destaque-valor">R$ ${fmt(d.total)}</span>
+      <span class="rel-destaque-sub">
+        ${d.pedidos} ${d.pedidos === 1 ? 'pedido' : 'pedidos'} · ticket médio R$ ${fmt(d.ticket_medio)}
+      </span>
+    </div>
+
+    <div class="rel-linhas">
+      <div><span>Produtos (subtotal)</span><span>R$ ${fmt(d.subtotal)}</span></div>
+      <div><span>Taxas de entrega</span><span>R$ ${fmt(d.taxa)}</span></div>
+      ${d.desconto > 0 ? `<div><span>Descontos</span><span>− R$ ${fmt(d.desconto)}</span></div>` : ''}
+      ${d.cancelados > 0 ? `<div class="rel-cancelado"><span>Cancelados (fora do total)</span><span>${d.cancelados} · R$ ${fmt(d.valor_cancelado)}</span></div>` : ''}
+    </div>
+
+    <div class="ed-secao">
+      <label class="ed-label">De onde vieram as vendas</label>
+      ${canais}
+    </div>
+
+    <div class="ed-secao">
+      <label class="ed-label">Itens vendidos</label>
+      <div class="rel-itens">${itens}</div>
+    </div>
+
+    <div class="ed-rodape">
+      <button class="btn-status" onclick="fecharVendas()">Fechar</button>
+    </div>`
+}
+
+document.getElementById('modal-vendas').addEventListener('click', e => {
+  if (e.target === document.getElementById('modal-vendas')) fecharVendas()
+})
+
 function abrirWhatsApp(tel) {
   const num = tel.replace(/\D/g, '')
   const wpp = num.startsWith('55') ? num : '55' + num
