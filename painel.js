@@ -69,7 +69,6 @@ async function carregarPedidos() {
   P.pedidos = data || []
   renderPedidos()
   atualizarBadges()
-  atualizarResumo()
 }
 
 /* ─── REALTIME ──────────────────────────────────── */
@@ -645,16 +644,6 @@ function atualizarBadges() {
   })
 }
 
-function atualizarResumo() {
-  // Resumo "do dia" = pedidos criados HOJE (horário local), exceto cancelados
-  const hojeStr = new Date().toDateString()
-  const doDia = P.pedidos.filter(p =>
-    new Date(p.created_at).toDateString() === hojeStr && !/cancel/i.test(p.status)
-  )
-  const total = doDia.reduce((a, p) => a + parseFloat(p.total || 0), 0)
-  document.getElementById('qt-pedidos').textContent = doDia.length
-  document.getElementById('total-dia').textContent = `R$ ${fmt(total)}`
-}
 
 /* ─── DETALHES DO PEDIDO ────────────────────────── */
 function abrirDetalhes(id) {
