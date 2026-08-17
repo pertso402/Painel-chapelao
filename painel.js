@@ -60,7 +60,7 @@ async function carregarPedidos() {
       forma_pagamento, troco_para, subtotal, taxa_entrega, desconto, total, observacao, canal,
       created_at, updated_at,
       clientes ( id, nome, telefone ),
-      itens_pedido ( nome_produto, quantidade, preco_unitario, total, observacao )
+      itens_pedido ( produto_id, nome_produto, quantidade, preco_unitario, total, observacao )
     `)
     .gte('created_at', desde)
     .order('created_at', { ascending: false })
@@ -703,6 +703,7 @@ function abrirDetalhes(id) {
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
       ${botoesAcao(p)}
+      <button class="btn-status" onclick="abrirEditor('${p.id}')">✏️ Editar pedido</button>
       ${cliente?.telefone ? `<button class="btn-status" style="background:rgba(74,222,128,.1);border-color:rgba(74,222,128,.3);color:#4ADE80" onclick="abrirWhatsApp('${cliente.telefone}')">💬 WhatsApp</button>` : ''}
     </div>`
 
@@ -715,6 +716,349 @@ function fecharModal() {
 
 document.getElementById('modal-pedido').addEventListener('click', e => {
   if (e.target === document.getElementById('modal-pedido')) fecharModal()
+})
+
+/* ═══ EDITOR DE PEDIDO ═══════════════════════════════
+   Corrige um pedido já lançado: itens, quantidades, endereço, pagamento,
+   troco, taxa, desconto, observação e canal.
+
+   O preço NÃO sai daqui. A tela manda produto_id + quantidade e quem busca o
+   preço no cardápio e refaz a conta é o banco (painel_editar_pedido). Os
+   totais mostrados abaixo são PRÉVIA — usam a mesma regra de preço, mas o
+   número que vale é o que volta do servidor depois de salvar. Ter duas fontes
+   de verdade pra dinheiro foi o bug que originou este sistema inteiro. */
+const ED = {
+  pedido: null,
+  itens: [],
+  busca: '',
+  categoriaAtiva: null,
+  form: { nome: '', tipoEntrega: 'delivery', endereco: '', pagamento: 'pix',
+          trocoPara: '', taxaEntrega: '', desconto: '', observacao: '', canal: '' },
+}
+
+async function abrirEditor(id) {
+  const p = P.pedidos.find(x => x.id === id)
+  if (!p) return
+
+  // O catálogo é o mesmo do lançamento manual — carrega uma vez só.
+  if (!NP.produtos.length) {
+    const { data, error } = await sb.from('produtos')
+      .select('id, nome, preco, preco_delivery, preco_promocional, categoria')
+      .eq('disponivel', true).order('categoria').order('nome')
+    if (error) { avisar(`Erro ao carregar cardápio: ${error.message}`, 'erro'); return }
+    NP.produtos = data || []
+  }
+
+  ED.pedido = p
+  ED.busca = ''
+  ED.categoriaAtiva = npCategorias()[0] || null
+
+  ED.itens = (p.itens_pedido || []).map(i => {
+    const cortesia = Number(i.preco_unitario) === 0
+    const nomeLimpo = String(i.nome_produto || '').replace(/\s*\(brinde\)\s*$/i, '').trim()
+    // Pedido antigo pode não ter produto_id gravado: tenta reencontrar pelo
+    // nome, e o que não casar aparece marcado na tela em vez de sumir calado.
+    const prod = NP.produtos.find(x => x.id === i.produto_id)
+      || NP.produtos.find(x => x.nome.trim() === nomeLimpo)
+    return {
+      produto_id: prod?.id || null,
+      nome: prod?.nome?.trim() || nomeLimpo,
+      quantidade: Number(i.quantidade) || 1,
+      observacao: i.observacao || '',
+      cortesia,
+    }
+  })
+
+  ED.form = {
+    nome: p.clientes?.nome || '',
+    tipoEntrega: p.tipo_entrega === 'retirada' ? 'retirada' : 'delivery',
+    endereco: p.endereco_entrega || '',
+    pagamento: p.forma_pagamento || 'pix',
+    trocoPara: p.troco_para != null ? String(p.troco_para) : '',
+    taxaEntrega: p.taxa_entrega != null ? String(p.taxa_entrega) : '',
+    desconto: p.desconto != null ? String(p.desconto) : '',
+    observacao: p.observacao || '',
+    canal: p.canal || '',
+  }
+
+  fecharModal()
+  renderEditor()
+  document.getElementById('modal-editar').classList.add('open')
+}
+
+function fecharEditor() {
+  document.getElementById('modal-editar').classList.remove('open')
+  ED.pedido = null
+}
+
+// Preço unitário na prévia: MESMA regra do banco
+// (preco_promocional ?? preco_delivery ?? preco). Cortesia é sempre zero.
+function edPreco(item) {
+  if (item.cortesia) return 0
+  const p = NP.produtos.find(x => x.id === item.produto_id)
+  return p ? precoProduto(p) : 0
+}
+
+function edTotais() {
+  const subtotal = ED.itens.reduce((s, i) => s + edPreco(i) * i.quantidade, 0)
+  const taxa = ED.form.tipoEntrega === 'delivery'
+    ? Math.max(0, Number(String(ED.form.taxaEntrega).replace(',', '.')) || 0) : 0
+  const desconto = Math.max(0, Number(String(ED.form.desconto).replace(',', '.')) || 0)
+  return { subtotal, taxa, desconto, total: subtotal + taxa - desconto }
+}
+
+function edCapturarForm() {
+  const val = (id) => document.getElementById(id)?.value
+  const f = ED.form
+  f.nome = val('ed-nome') ?? f.nome
+  f.tipoEntrega = val('ed-tipo') ?? f.tipoEntrega
+  f.endereco = val('ed-endereco') ?? f.endereco
+  f.pagamento = val('ed-pagamento') ?? f.pagamento
+  f.trocoPara = val('ed-troco') ?? f.trocoPara
+  f.taxaEntrega = val('ed-taxa') ?? f.taxaEntrega
+  f.desconto = val('ed-desconto') ?? f.desconto
+  f.observacao = val('ed-obs') ?? f.observacao
+  f.canal = val('ed-canal') ?? f.canal
+}
+
+function edAtualizar() { edCapturarForm(); renderEditor() }
+
+function edAddProduto(produtoId) {
+  edCapturarForm()
+  const existente = ED.itens.find(i => i.produto_id === produtoId && !i.cortesia && !i.observacao)
+  if (existente) existente.quantidade++
+  else {
+    const p = NP.produtos.find(x => x.id === produtoId)
+    if (!p) return
+    ED.itens.push({ produto_id: p.id, nome: p.nome.trim(), quantidade: 1, observacao: '', cortesia: false })
+  }
+  renderEditor()
+}
+
+function edQtd(idx, delta) {
+  edCapturarForm()
+  const item = ED.itens[idx]
+  if (!item) return
+  item.quantidade = Math.max(1, item.quantidade + delta)
+  renderEditor()
+}
+
+function edRemover(idx) {
+  edCapturarForm()
+  ED.itens.splice(idx, 1)
+  renderEditor()
+}
+
+function edCortesia(idx) {
+  edCapturarForm()
+  const item = ED.itens[idx]
+  if (item) item.cortesia = !item.cortesia
+  renderEditor()
+}
+
+function edObs(idx, valor) {
+  if (ED.itens[idx]) ED.itens[idx].observacao = valor
+}
+
+let edBuscaTimer = null
+function edBuscar(valor) {
+  ED.busca = valor
+  clearTimeout(edBuscaTimer)
+  edBuscaTimer = setTimeout(() => {
+    renderEditor()
+    const b = document.getElementById('ed-busca')
+    if (b) { b.focus(); b.setSelectionRange(b.value.length, b.value.length) }
+  }, 180)
+}
+
+function edCategoria(cat) { edCapturarForm(); ED.categoriaAtiva = cat; ED.busca = ''; renderEditor() }
+
+function renderEditor() {
+  const p = ED.pedido
+  if (!p) return
+  const f = ED.form
+  const t = edTotais()
+  const semProduto = ED.itens.some(i => !i.produto_id)
+
+  const linhasItens = ED.itens.map((i, idx) => `
+    <div class="ed-item ${i.produto_id ? '' : 'orfao'}">
+      <div class="ed-item-topo">
+        <span class="ed-item-nome">${i.nome}${i.cortesia ? ' <em>(cortesia)</em>' : ''}</span>
+        <span class="ed-item-preco">${i.cortesia ? 'R$ 0,00' : 'R$ ' + fmt(edPreco(i) * i.quantidade)}</span>
+      </div>
+      ${i.produto_id ? '' : '<div class="ed-alerta">Este item não existe mais no cardápio. Remova ou substitua antes de salvar.</div>'}
+      <div class="ed-item-acoes">
+        <button type="button" class="ed-qtd" onclick="edQtd(${idx},-1)">−</button>
+        <span class="ed-qtd-valor">${i.quantidade}</span>
+        <button type="button" class="ed-qtd" onclick="edQtd(${idx},1)">+</button>
+        <input class="ed-item-obs" placeholder="observação deste item"
+               value="${(i.observacao || '').replace(/"/g, '&quot;')}" oninput="edObs(${idx}, this.value)">
+        <button type="button" class="ed-mini ${i.cortesia ? 'ativa' : ''}" onclick="edCortesia(${idx})" title="Marcar como cortesia">🎁</button>
+        <button type="button" class="ed-mini remover" onclick="edRemover(${idx})" title="Remover item">✕</button>
+      </div>
+    </div>`).join('')
+
+  const busca = npNorm(ED.busca)
+  const lista = busca
+    ? NP.produtos.filter(x => npNorm(x.nome).includes(busca))
+    : NP.produtos.filter(x => (x.categoria || 'Outros').trim() === ED.categoriaAtiva)
+
+  const abas = npCategorias().map(cat => `
+    <button type="button" class="np-cat ${!busca && cat === ED.categoriaAtiva ? 'ativa' : ''}"
+            onclick="edCategoria('${cat.replace(/'/g, "\\'")}')">
+      ${NP_ICONE_CATEGORIA[cat] || '🍽️'} ${cat}
+    </button>`).join('')
+
+  const cards = lista.map(x => `
+    <button type="button" class="np-produto" onclick="edAddProduto('${x.id}')">
+      <span class="np-produto-nome">${x.nome.trim()}</span>
+      <span class="np-produto-preco">R$ ${fmt(precoProduto(x))}</span>
+    </button>`).join('')
+
+  document.getElementById('modal-editar-card').innerHTML = `
+    <div class="ed-cabecalho">
+      <h2>✏️ Editar pedido #${p.numero_pedido}</h2>
+      <button class="btn-sair" onclick="fecharEditor()">✕ Fechar</button>
+    </div>
+
+    <div class="ed-secao">
+      <label class="ed-label">Itens do pedido</label>
+      ${linhasItens || '<p class="np-vazio">Nenhum item. Adicione ao menos um abaixo.</p>'}
+    </div>
+
+    <div class="ed-secao">
+      <label class="ed-label">Adicionar item</label>
+      <input type="search" id="ed-busca" class="np-busca" placeholder="🔎 Buscar no cardápio..."
+             value="${ED.busca}" oninput="edBuscar(this.value)" autocomplete="off">
+      <div class="np-cats">${abas}</div>
+      <div class="np-produtos ed-produtos">${cards || '<p class="np-vazio">Nenhum produto encontrado.</p>'}</div>
+    </div>
+
+    <div class="ed-secao ed-grid">
+      <div><label class="ed-label">Cliente</label>
+        <input id="ed-nome" class="np-input" value="${(f.nome || '').replace(/"/g, '&quot;')}" onchange="edCapturarForm()"></div>
+
+      <div><label class="ed-label">Entrega</label>
+        <select id="ed-tipo" class="np-input" onchange="edAtualizar()">
+          <option value="delivery" ${f.tipoEntrega === 'delivery' ? 'selected' : ''}>🛵 Delivery</option>
+          <option value="retirada" ${f.tipoEntrega === 'retirada' ? 'selected' : ''}>🏠 Retirada</option>
+        </select></div>
+
+      ${f.tipoEntrega === 'delivery' ? `
+      <div class="ed-largo"><label class="ed-label">Endereço</label>
+        <input id="ed-endereco" class="np-input" value="${(f.endereco || '').replace(/"/g, '&quot;')}" onchange="edCapturarForm()"></div>
+
+      <div><label class="ed-label">Taxa de entrega (R$)</label>
+        <input id="ed-taxa" class="np-input" inputmode="decimal" value="${f.taxaEntrega}" oninput="edAtualizar()"></div>` : ''}
+
+      <div><label class="ed-label">Pagamento</label>
+        <select id="ed-pagamento" class="np-input" onchange="edAtualizar()">
+          <option value="pix" ${f.pagamento === 'pix' ? 'selected' : ''}>PIX</option>
+          <option value="dinheiro" ${f.pagamento === 'dinheiro' ? 'selected' : ''}>Dinheiro</option>
+          <option value="cartao" ${f.pagamento === 'cartao' ? 'selected' : ''}>Cartão</option>
+        </select></div>
+
+      ${f.pagamento === 'dinheiro' ? `
+      <div><label class="ed-label">Troco para (R$)</label>
+        <input id="ed-troco" class="np-input" inputmode="decimal" value="${f.trocoPara}" onchange="edCapturarForm()"></div>` : ''}
+
+      <div><label class="ed-label">Desconto (R$)</label>
+        <input id="ed-desconto" class="np-input" inputmode="decimal" value="${f.desconto}" oninput="edAtualizar()"></div>
+
+      <div><label class="ed-label">Canal</label>
+        <select id="ed-canal" class="np-input" onchange="edCapturarForm()">
+          ${NP_CANAIS.some(c => c.valor === f.canal) ? '' : `<option value="${f.canal}" selected>${f.canal ? canalLabel(f.canal) : '— sem canal —'}</option>`}
+          ${NP_CANAIS.map(c => `<option value="${c.valor}" ${c.valor === f.canal ? 'selected' : ''}>${c.label}</option>`).join('')}
+        </select></div>
+
+      <div class="ed-largo"><label class="ed-label">Observação do pedido</label>
+        <input id="ed-obs" class="np-input" placeholder="ex: tocar a campainha, apto 302"
+               value="${(f.observacao || '').replace(/"/g, '&quot;')}" onchange="edCapturarForm()"></div>
+    </div>
+
+    <div class="ed-totais">
+      <div><span>Subtotal</span><span>R$ ${fmt(t.subtotal)}</span></div>
+      ${f.tipoEntrega === 'delivery' ? `<div><span>Taxa</span><span>R$ ${fmt(t.taxa)}</span></div>` : ''}
+      ${t.desconto > 0 ? `<div><span>Desconto</span><span>− R$ ${fmt(t.desconto)}</span></div>` : ''}
+      <div class="ed-total"><span>Total</span><span>R$ ${fmt(t.total)}</span></div>
+      <div class="ed-previa">Prévia — o valor final é recalculado pelo servidor ao salvar.</div>
+    </div>
+
+    <p class="ed-erro" id="ed-erro"></p>
+    <div class="ed-rodape">
+      <button class="btn-status" onclick="fecharEditor()">Cancelar</button>
+      <button class="btn-salvar" id="ed-salvar" onclick="edSalvar()" ${semProduto || !ED.itens.length ? 'disabled' : ''}>
+        💾 Salvar alterações
+      </button>
+    </div>`
+}
+
+async function edSalvar() {
+  edCapturarForm()
+  const p = ED.pedido
+  const f = ED.form
+  const erro = document.getElementById('ed-erro')
+  const btn = document.getElementById('ed-salvar')
+  erro.textContent = ''
+
+  if (!ED.itens.length) { erro.textContent = 'O pedido precisa de pelo menos 1 item.'; return }
+  if (ED.itens.some(i => !i.produto_id)) { erro.textContent = 'Há item que não existe mais no cardápio. Remova ou substitua.'; return }
+  if (f.tipoEntrega === 'delivery' && !f.endereco.trim()) { erro.textContent = 'Delivery precisa de endereço.'; return }
+
+  const num = (v) => { const n = Number(String(v).replace(',', '.')); return Number.isFinite(n) ? n : null }
+
+  let troco = null
+  if (f.pagamento === 'dinheiro' && String(f.trocoPara).trim()) {
+    troco = num(f.trocoPara)
+    if (troco === null || troco < 0) { erro.textContent = 'Valor do troco inválido.'; return }
+  }
+
+  btn.disabled = true
+  btn.textContent = '⏳ Salvando...'
+
+  try {
+    const { data, error } = await sb.rpc('painel_editar_pedido', {
+      p_pedido_id: p.id,
+      p_itens: ED.itens.map(i => ({
+        produto_id: i.produto_id,
+        quantidade: i.quantidade,
+        observacao: i.observacao || null,
+        cortesia: !!i.cortesia,
+      })),
+      p_tipo_entrega: f.tipoEntrega,
+      p_forma_pagamento: f.pagamento,
+      p_endereco: f.tipoEntrega === 'delivery' ? f.endereco.trim() : null,
+      p_troco_para: troco,
+      p_taxa_entrega: f.tipoEntrega === 'delivery' ? (num(f.taxaEntrega) ?? 0) : 0,
+      p_desconto: String(f.desconto).trim() ? (num(f.desconto) ?? 0) : 0,
+      p_observacao: f.observacao.trim() || null,
+      p_canal: f.canal || null,
+      p_nome_cliente: f.nome.trim() || null,
+    })
+    if (error) throw error
+
+    const antes = Number(data.totalAnterior || 0)
+    const agora = Number(data.total || 0)
+    const mudouTotal = Math.abs(agora - antes) > 0.005
+    avisar(
+      `✅ Pedido #${data.numeroPedido} atualizado.` +
+      (mudouTotal ? ` Total: R$ ${fmt(antes)} → R$ ${fmt(agora)}` : '') +
+      (data.reimprimir ? ' · nota nova vai sair na impressora' : '')
+    )
+
+    fecharEditor()
+    await carregarPedidos()
+  } catch (e) {
+    // A mensagem vem do próprio banco (troco menor que o total, desconto maior
+    // que o subtotal, produto fora do cardápio) — é mais útil que "erro".
+    erro.textContent = e.message || 'Não consegui salvar as alterações.'
+    btn.disabled = false
+    btn.textContent = '💾 Salvar alterações'
+  }
+}
+
+document.getElementById('modal-editar').addEventListener('click', e => {
+  if (e.target === document.getElementById('modal-editar')) fecharEditor()
 })
 
 function abrirWhatsApp(tel) {
