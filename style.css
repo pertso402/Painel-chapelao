@@ -932,3 +932,13 @@ body::before {
   color: #FDE68A; font-size: .95rem; cursor: pointer; text-align: center;
 }
 .aviso-som:hover { background: rgba(250,204,21,.22); }
+
+/* Select para corrigir o canal de origem dentro do detalhe do pedido.
+   Discreto de proposito: e um conserto ocasional, nao uma acao do fluxo. */
+.select-canal {
+  padding: 4px 8px; border-radius: 8px; font-size: 12.5px; font-weight: 700;
+  background: rgba(255,255,255,.06); color: var(--text);
+  border: 1px solid var(--border); cursor: pointer;
+}
+.select-canal:hover { background: rgba(255,255,255,.12); border-color: var(--amarelo); }
+.select-canal:focus { outline: none; border-color: var(--amarelo); }

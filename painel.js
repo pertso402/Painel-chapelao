@@ -315,8 +315,62 @@ function canalLabel(c) {
     case 'instagram':          return '📸 Instagram'
     case 'balcao':             return '🏠 Balcão'
     case 'painel':             return '🏠 Balcão'  // valor antigo, antes do canal ser escolhido
+    // Gravado por uma versão antiga do agente, antes de separar orgânico de
+    // anúncio. Fica marcado como antigo pra não ser confundido com o atual.
+    case 'whatsapp':           return '💬 WhatsApp (valor antigo)'
     default:                   return c || '—'
   }
+}
+
+/* ─── CORRIGIR O CANAL DE UM PEDIDO ─────────────────
+   O canal é escolhido pelo sistema no momento do pedido e às vezes sai errado
+   — um cliente que veio do anúncio entrou como WhatsApp orgânico, e a conta de
+   quanto o anúncio traz de venda ficou menor do que é. Como o canal é a base
+   dessa medição, precisa dar pra consertar sem mexer no banco. */
+function selectCanal(p) {
+  const atual = (p.canal || '').toLowerCase()
+  // Valor gravado por versões antigas ("whatsapp", "painel") não está na lista
+  // de escolhas. Entra como opção extra em vez de o select mostrar outro canal
+  // qualquer e a pessoa achar que o pedido é o que ele não é.
+  const conhecido = NP_CANAIS.some(c => c.valor === atual)
+  // Pedido sem canal nenhum precisa de um item vazio selecionado: sem ele o
+  // navegador mostra a primeira opção da lista, e a pessoa lê "Balcão" num
+  // pedido cuja origem ninguém sabe.
+  const extra = conhecido ? ''
+    : `<option value="${atual}" selected>${atual ? canalLabel(atual) : '— sem canal —'}</option>`
+
+  return `
+    <select class="select-canal" onchange="mudarCanal('${p.id}', this.value)" title="Corrigir de onde veio este pedido">
+      ${extra}
+      ${NP_CANAIS.map(c =>
+        `<option value="${c.valor}" ${c.valor === atual ? 'selected' : ''}>${c.label}</option>`).join('')}
+    </select>`
+}
+
+async function mudarCanal(id, novoCanal) {
+  const pedido = P.pedidos.find(x => x.id === id)
+  const anterior = pedido?.canal
+
+  // .select() de volta: sem isso um UPDATE recusado (RLS, trigger) passa
+  // despercebido e a tela mostra um canal que o banco não gravou.
+  const { data, error } = await sb.from('pedidos')
+    .update({ canal: novoCanal }).eq('id', id).select('id, canal')
+
+  if (error || !data?.length) {
+    avisar(`❌ Não consegui mudar o canal.\n\n${error?.message || 'O banco não confirmou a alteração.'}`, 'erro')
+    await carregarPedidos()
+    if (pedido) abrirDetalhes(id)  // volta a mostrar o valor real
+    return
+  }
+
+  // A origem também vive no cliente — é de lá que saem as métricas por cliente
+  // e o brinde de quem vem do anúncio. Marcar aqui evita corrigir só metade.
+  if (novoCanal === 'whatsapp_anuncio' && pedido?.clientes?.id) {
+    await sb.from('clientes').update({ veio_de_anuncio: true }).eq('id', pedido.clientes.id)
+  }
+
+  avisar(`✅ Canal corrigido: ${canalLabel(anterior)} → ${canalLabel(novoCanal)}`)
+  await carregarPedidos()
 }
 
 function statusLabel(s) {
@@ -624,7 +678,10 @@ function abrirDetalhes(id) {
       <span><strong style="color:var(--text)">🛵 Entrega:</strong> ${p.tipo_entrega === 'delivery' ? 'Delivery' : 'Retirada'}</span>
       ${p.endereco_entrega ? `<span><strong style="color:var(--text)">📍 Endereço:</strong> ${p.endereco_entrega}</span>` : ''}
       <span><strong style="color:var(--text)">💳 Pagamento:</strong> ${pgtoLabel(p.forma_pagamento)}</span>
-      <span><strong style="color:var(--text)">🔖 Canal:</strong> ${canalLabel(p.canal)}</span>
+      <span style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <strong style="color:var(--text)">🔖 Canal:</strong>
+        ${selectCanal(p)}
+      </span>
       ${p.troco_para ? `<span><strong style="color:var(--text)">💵 Troco para:</strong> R$ ${fmt(p.troco_para)}</span>` : ''}
       ${p.observacao ? `<span><strong style="color:var(--text)">📝 Obs:</strong> ${p.observacao}</span>` : ''}
     </div>
