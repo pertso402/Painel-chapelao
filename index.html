@@ -33,40 +33,18 @@
     </header>
 
     <!-- ALERTAS DE ATENDIMENTO HUMANO -->
-    <div class="aviso-som" id="aviso-som" style="display:none" onclick="destravarAudio()">🔇 O navegador está bloqueando o som. <b>Clique aqui</b> para ativar o alarme da taxa de entrega.</div>
+    <div class="aviso-som" id="aviso-som" style="display:none" onclick="destravarAudio()">🔇 O navegador está bloqueando o som. <b>Clique aqui</b> para ativar o alarme de pedido novo e de taxa de entrega.</div>
     <div class="alertas-banner" id="taxas-banner" style="display:none"></div>
     <div class="alertas-banner" id="alertas-banner" style="display:none"></div>
 
-    <!-- TABS -->
-    <nav class="tabs-nav">
-      <button class="tab-btn active" data-status="pendente" onclick="selecionarTab('pendente', this)">
-        Novos <span class="tab-badge" id="badge-pendente">0</span>
-      </button>
-      <button class="tab-btn" data-status="preparando" onclick="selecionarTab('preparando', this)">
-        Preparando <span class="tab-badge" id="badge-preparando">0</span>
-      </button>
-      <button class="tab-btn" data-status="pronto" onclick="selecionarTab('pronto', this)">
-        Prontos <span class="tab-badge" id="badge-pronto">0</span>
-      </button>
-      <button class="tab-btn" data-status="entregue" onclick="selecionarTab('entregue', this)">
-        Finalizados <span class="tab-badge" id="badge-entregue">0</span>
-      </button>
-      <button class="tab-btn" data-status="cancelado" onclick="selecionarTab('cancelado', this)">
-        Cancelados <span class="tab-badge" id="badge-cancelado">0</span>
-      </button>
-    </nav>
-
-    <!-- PEDIDOS GRID -->
+    <!-- QUADRO KANBAN -->
     <main class="pedidos-main" id="pedidos-main">
       <div class="loading-pedidos" id="loading-pedidos">
         <div class="loading-spinner"></div>
         <p>Carregando pedidos...</p>
       </div>
-      <div class="pedidos-grid" id="pedidos-grid" style="display:none"></div>
-      <div class="pedidos-vazio" id="pedidos-vazio" style="display:none">
-        <span>📭</span>
-        <p>Nenhum pedido aqui</p>
-      </div>
+      <div class="kanban" id="kanban"></div>
+      <button class="btn-cancelados" id="btn-cancelados" onclick="alternarCancelados()">✕ mostrar cancelados</button>
     </main>
   </div>
 
@@ -82,10 +60,12 @@
     <div class="modal-card" id="modal-vendas-card"></div>
   </div>
 
+  <!-- MODAL EDITAR PEDIDO -->
   <div class="modal-overlay" id="modal-editar">
     <div class="modal-card" id="modal-editar-card"></div>
   </div>
 
+  <!-- MODAL VÍDEO DO BUFFET DO DIA -->
   <div class="modal-overlay" id="modal-buffet">
     <div class="modal-card" id="modal-buffet-card">
       <!-- populated by JS -->

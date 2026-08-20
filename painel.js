@@ -13,7 +13,7 @@ const P = {
   pedidos: [],
   alertas: [],
   taxas: [],
-  tabAtiva: 'pendente',
+  mostrarCancelados: false,
   lojaAberta: true,
   midiaBuffet: null,
   cardapioHoje: false
@@ -68,7 +68,7 @@ async function carregarPedidos() {
 
   P.pedidos = data || []
   renderPedidos()
-  atualizarBadges()
+  sincronizarAlarmeDeNovos()
 }
 
 /* ─── REALTIME ──────────────────────────────────── */
@@ -135,7 +135,9 @@ function atualizarAvisoDeSom() {
   const el = document.getElementById('aviso-som')
   if (!el) return
   // Só cobra o clique quando existe alarme tocando: fora disso é ruído visual.
-  el.style.display = (!somDestravado() && P.taxas?.length) ? 'block' : 'none'
+  const temAlarme = (P.taxas?.length || 0) > 0 ||
+    P.pedidos.some(p => normStatus(p.status) === 'pendente')
+  el.style.display = (!somDestravado() && temAlarme) ? 'block' : 'none'
 }
 
 /* Bipe genérico: um oscilador, uma frequência, uma duração. */
@@ -184,21 +186,66 @@ function sincronizarAlarmeDeTaxa() {
   atualizarAvisoDeSom()
 }
 
-function tocaSom() {
-  try {
-    const ctx = getAudio()
+/* ─── ALARME DE PEDIDO NOVO (estilo iFood) ──────────
+   Um bipe curto e discreto se perde no barulho de cozinha em hora de pico.
+   Este é alto, tem timbre cheio (três harmônicos empilhados) e sobe em duas
+   notas — o padrão que o ouvido reconhece de longe como "chegou pedido".
+
+   E, como no iFood, ele INSISTE: repete enquanto houver pedido parado em
+   "Novos". Tocar uma vez só é o que fazia pedido ficar esquecido na primeira
+   coluna. Para sozinho quando a fila de novos zera; ninguém precisa desligar. */
+function acorde(base, inicio, duracao, volume) {
+  const ctx = getAudio()
+  // Fundamental + oitava + quinta. Um oscilador sozinho soa fino e some no
+  // ambiente; empilhado vira um sino que atravessa a cozinha.
+  const vozes = [
+    { freq: base,        tipo: 'square',   vol: volume },
+    { freq: base * 2,    tipo: 'triangle', vol: volume * 0.65 },
+    { freq: base * 3,    tipo: 'sine',     vol: volume * 0.45 },
+  ]
+  for (const v of vozes) {
     const osc = ctx.createOscillator()
     const gain = ctx.createGain()
-    osc.connect(gain)
-    gain.connect(ctx.destination)
-    osc.frequency.setValueAtTime(880, ctx.currentTime)
-    osc.frequency.setValueAtTime(1100, ctx.currentTime + 0.1)
-    osc.frequency.setValueAtTime(880, ctx.currentTime + 0.2)
-    gain.gain.setValueAtTime(0.3, ctx.currentTime)
-    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5)
-    osc.start(ctx.currentTime)
-    osc.stop(ctx.currentTime + 0.5)
+    osc.connect(gain); gain.connect(ctx.destination)
+    osc.type = v.tipo
+    osc.frequency.setValueAtTime(v.freq, ctx.currentTime + inicio)
+    // Ataque bem curto e queda longa: dá o "dim" de campainha em vez do
+    // "click" seco que um setValueAtTime puro produz.
+    gain.gain.setValueAtTime(0.0001, ctx.currentTime + inicio)
+    gain.gain.exponentialRampToValueAtTime(v.vol, ctx.currentTime + inicio + 0.012)
+    gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + inicio + duracao)
+    osc.start(ctx.currentTime + inicio)
+    osc.stop(ctx.currentTime + inicio + duracao + 0.02)
+  }
+}
+
+function tocaSom() {
+  try {
+    // dó-sol subindo, duas vezes — mesma cadência de "pedido novo" de app.
+    for (let volta = 0; volta < 2; volta++) {
+      const t = volta * 0.62
+      acorde(523.25, t,        0.30, 0.55)   // dó
+      acorde(783.99, t + 0.20, 0.45, 0.60)   // sol
+    }
   } catch (e) {}
+}
+
+/* Enquanto houver pedido em "Novos", o alarme repete. É o mesmo princípio do
+   alarme da taxa, mas com som diferente: quem está na cozinha precisa saber
+   o que chegou sem olhar a tela. */
+let alarmeNovosTimer = null
+const REPETIR_ALARME_MS = Number(localStorage.getItem('alarme_novos_seg') || 15) * 1000
+
+function sincronizarAlarmeDeNovos() {
+  const novos = P.pedidos.filter(p => normStatus(p.status) === 'pendente').length
+
+  if (novos > 0 && !alarmeNovosTimer) {
+    alarmeNovosTimer = setInterval(tocaSom, REPETIR_ALARME_MS)
+  } else if (novos === 0 && alarmeNovosTimer) {
+    clearInterval(alarmeNovosTimer)
+    alarmeNovosTimer = null
+  }
+  atualizarAvisoDeSom()
 }
 
 /* Som de alerta de atendimento — diferente do som de pedido novo (3 bips
@@ -230,32 +277,98 @@ function notificar(msg) {
   }
 }
 
-/* ─── TABS ──────────────────────────────────────── */
-function selecionarTab(status, btn) {
-  P.tabAtiva = status
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'))
-  btn.classList.add('active')
+/* ─── RENDER PEDIDOS ────────────────────────────── */
+/* ─── QUADRO KANBAN ─────────────────────────────────
+   Antes o painel tinha abas: só a aba aberta ficava visível, e pedido parado
+   em "Preparando" não existia para quem estava olhando "Novos". Resultado —
+   pedido empilhado numa etapa porque ninguém via que ele estava lá.
+
+   Com as colunas lado a lado, a fila inteira fica à vista e a etapa entupida
+   se denuncia sozinha pelo tamanho da pilha. */
+const COLUNAS = [
+  { chave: 'pendente',     titulo: 'Novos',        emoji: '🔔' },
+  { chave: 'preparando',   titulo: 'Preparando',   emoji: '👨‍🍳' },
+  { chave: 'pronto',       titulo: 'Prontos',      emoji: '✅' },
+  { chave: 'saiu_entrega', titulo: 'Saiu p/ entrega', emoji: '🛵' },
+  { chave: 'entregue',     titulo: 'Finalizados',  emoji: '🏁' },
+]
+
+// Para onde cada coluna empurra o pedido quando arrastam o card.
+const PROXIMA_ETAPA = {
+  pendente: 'preparando', preparando: 'pronto',
+  pronto: 'saiu_entrega', saiu_entrega: 'entregue',
+}
+
+function renderPedidos() {
+  const quadro = document.getElementById('kanban')
+  const loading = document.getElementById('loading-pedidos')
+  if (loading) loading.style.display = 'none'
+  if (!quadro) return
+
+  const colunas = P.mostrarCancelados
+    ? [...COLUNAS, { chave: 'cancelado', titulo: 'Cancelados', emoji: '✕' }]
+    : COLUNAS
+
+  quadro.innerHTML = colunas.map(col => {
+    const pedidos = P.pedidos.filter(p => normStatus(p.status) === col.chave)
+
+    // Novos primeiro os mais antigos (quem espera há mais tempo é atendido
+    // antes); etapas finais primeiro os mais recentes.
+    const ordenados = (col.chave === 'entregue' || col.chave === 'cancelado')
+      ? pedidos
+      : [...pedidos].reverse()
+
+    const cards = ordenados.map(p => cardPedido(p)).join('')
+      || '<div class="kb-vazio">nada aqui</div>'
+
+    return `
+      <section class="kb-coluna" data-coluna="${col.chave}"
+               ondragover="kbSobre(event)" ondragleave="kbSai(event)" ondrop="kbSolta(event,'${col.chave}')">
+        <header class="kb-cabecalho ${col.chave}">
+          <span class="kb-titulo">${col.emoji} ${col.titulo}</span>
+          <span class="kb-contador">${pedidos.length}</span>
+        </header>
+        <div class="kb-cards">${cards}</div>
+      </section>`
+  }).join('')
+}
+
+function alternarCancelados() {
+  P.mostrarCancelados = !P.mostrarCancelados
+  const btn = document.getElementById('btn-cancelados')
+  if (btn) btn.classList.toggle('ativo', P.mostrarCancelados)
   renderPedidos()
 }
 
-/* ─── RENDER PEDIDOS ────────────────────────────── */
-function renderPedidos() {
-  const filtrados = P.pedidos.filter(p => normStatus(p.status) === P.tabAtiva)
-  const grid = document.getElementById('pedidos-grid')
-  const vazio = document.getElementById('pedidos-vazio')
-  const loading = document.getElementById('loading-pedidos')
+/* ─── ARRASTAR CARD ENTRE COLUNAS ───────────────────
+   Atalho para quem usa mouse. Os botões do card continuam existindo e são o
+   caminho de quem está no tablet — arrastar não funciona no toque, e tirar os
+   botões deixaria a cozinha sem como avançar o pedido. */
+function kbPega(ev, id) {
+  ev.dataTransfer.setData('text/plain', id)
+  ev.dataTransfer.effectAllowed = 'move'
+  ev.currentTarget.classList.add('arrastando')
+}
+function kbLarga(ev) { ev.currentTarget.classList.remove('arrastando') }
+function kbSobre(ev) { ev.preventDefault(); ev.currentTarget.classList.add('alvo') }
+function kbSai(ev) { ev.currentTarget.classList.remove('alvo') }
 
-  loading.style.display = 'none'
+async function kbSolta(ev, coluna) {
+  ev.preventDefault()
+  ev.currentTarget.classList.remove('alvo')
+  const id = ev.dataTransfer.getData('text/plain')
+  const pedido = P.pedidos.find(x => x.id === id)
+  if (!pedido) return
 
-  if (filtrados.length === 0) {
-    grid.style.display = 'none'
-    vazio.style.display = 'flex'
+  const de = normStatus(pedido.status)
+  if (de === coluna) return
+
+  // Cancelar por arraste seria fácil demais de fazer sem querer.
+  if (coluna === 'cancelado') {
+    avisar('Para cancelar, abra o pedido e use o botão Cancelar.', 'erro')
     return
   }
-
-  vazio.style.display = 'none'
-  grid.style.display = 'grid'
-  grid.innerHTML = filtrados.map(p => cardPedido(p)).join('')
+  await mudarStatus(id, coluna === 'entregue' ? 'entregue' : coluna)
 }
 
 function cardPedido(p) {
@@ -283,7 +396,8 @@ function cardPedido(p) {
     : (pgto === 'dinheiro' ? `<div class="pc-troco">💵 Dinheiro · sem troco anotado</div>` : '')
 
   return `
-    <div class="pedido-card ${cls}" data-pedido-id="${p.id}" onclick="abrirDetalhes('${p.id}')">
+    <div class="pedido-card ${cls}" data-pedido-id="${p.id}" onclick="abrirDetalhes('${p.id}')"
+         draggable="true" ondragstart="kbPega(event,'${p.id}')" ondragend="kbLarga(event)">
       <div class="pc-header">
         <span class="pc-numero">#${p.numero_pedido}</span>
         <span class="pc-tempo${urgente}">⏱ ${tempo}</span>
@@ -390,8 +504,11 @@ function statusLabel(s) {
 function normStatus(s) {
   const t = (s || '').toLowerCase()
   if (/cancel/.test(t)) return 'cancelado'
+  // "saiu_entrega" tem que ser testado ANTES de "entreg", senão o regex de
+  // entregue casa com ele e o pedido pula direto pro fim do quadro.
+  if (/saiu/.test(t)) return 'saiu_entrega'
   if (/entreg/.test(t)) return 'entregue'
-  if (/pronto|saiu/.test(t)) return 'pronto'
+  if (/pronto/.test(t)) return 'pronto'
   if (/aguard|pend|confirm/.test(t)) return 'pendente'  // novos: pendente, confirmado, aguardando_preparo
   if (/prepar/.test(t)) return 'preparando'
   return t
@@ -399,7 +516,9 @@ function normStatus(s) {
 
 function statusClass(s) {
   const n = normStatus(s)
-  return n === 'pendente' ? 'novo' : n
+  if (n === 'pendente') return 'novo'
+  if (n === 'saiu_entrega') return 'pronto'
+  return n
 }
 
 function pgtoLabel(p) {
@@ -635,15 +754,6 @@ function atualizarTituloAba() {
 }
 
 /* ─── BADGES & RESUMO ───────────────────────────── */
-function atualizarBadges() {
-  const tabs = ['pendente', 'preparando', 'pronto', 'entregue', 'cancelado']
-  tabs.forEach(tab => {
-    const count = P.pedidos.filter(p => normStatus(p.status) === tab).length
-    const el = document.getElementById('badge-' + tab)
-    if (el) el.textContent = count
-  })
-}
-
 
 /* ─── DETALHES DO PEDIDO ────────────────────────── */
 function abrirDetalhes(id) {

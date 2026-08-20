@@ -1019,3 +1019,84 @@ body::before {
 .rel-item-qtd { font-weight: 900; color: var(--amarelo); min-width: 34px; }
 .rel-item-nome { flex: 1; }
 .rel-item-total { font-weight: 700; white-space: nowrap; }
+
+/* ─── QUADRO KANBAN ───────────────────────────────────────────────────────
+   Substitui as abas. Com as etapas lado a lado, pedido parado em "Preparando"
+   nao fica invisivel pra quem estava olhando "Novos" — que era o motivo de
+   tudo empilhar numa etapa so. */
+.kanban {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(255px, 1fr);
+  gap: 12px;
+  align-items: start;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  /* O quadro rola sozinho; a pagina nao. Assim os cabecalhos das colunas
+     ficam sempre no alto, mesmo com fila grande. */
+  max-height: calc(100vh - 190px);
+}
+
+.kb-coluna {
+  display: flex; flex-direction: column;
+  background: rgba(255,255,255,.025);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  min-height: 140px;
+  max-height: 100%;
+  overflow: hidden;
+}
+/* Coluna destacada enquanto um card esta sendo arrastado por cima dela. */
+.kb-coluna.alvo { border-color: var(--amarelo); background: rgba(250,204,21,.07); }
+
+.kb-cabecalho {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 11px 13px;
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 2;
+  background: var(--bg-card, #14161c);
+}
+.kb-titulo { font-size: 12.5px; font-weight: 800; letter-spacing: .02em; }
+.kb-contador {
+  min-width: 24px; text-align: center; padding: 2px 8px; border-radius: 99px;
+  font-size: 12px; font-weight: 900;
+  background: rgba(255,255,255,.09); color: var(--text);
+}
+/* Cada etapa com sua cor: da pra achar a coluna sem ler o titulo. */
+.kb-cabecalho.pendente     { border-bottom-color: rgba(250,204,21,.5); }
+.kb-cabecalho.pendente .kb-contador { background: var(--gold-grad); color: #2A1D00; }
+.kb-cabecalho.preparando   { border-bottom-color: rgba(96,165,250,.5); }
+.kb-cabecalho.preparando .kb-contador { background: rgba(96,165,250,.3); }
+.kb-cabecalho.pronto       { border-bottom-color: rgba(74,222,128,.5); }
+.kb-cabecalho.pronto .kb-contador { background: rgba(74,222,128,.3); }
+.kb-cabecalho.saiu_entrega { border-bottom-color: rgba(167,139,250,.5); }
+.kb-cabecalho.saiu_entrega .kb-contador { background: rgba(167,139,250,.3); }
+.kb-cabecalho.cancelado    { border-bottom-color: rgba(248,113,113,.45); }
+
+.kb-cards {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 10px; overflow-y: auto;
+}
+.kb-cards .pedido-card { cursor: grab; }
+.kb-cards .pedido-card.arrastando { opacity: .4; cursor: grabbing; }
+.kb-vazio {
+  text-align: center; padding: 18px 8px;
+  font-size: 12px; color: var(--text-muted); opacity: .5;
+}
+
+.btn-cancelados {
+  align-self: flex-start; margin-top: 10px;
+  padding: 6px 12px; border-radius: 9px; cursor: pointer;
+  font-size: 12px; font-weight: 700;
+  background: transparent; color: var(--text-muted);
+  border: 1px dashed var(--border);
+}
+.btn-cancelados:hover { color: var(--text); border-color: var(--text-muted); }
+.btn-cancelados.ativo { border-style: solid; color: #FCA5A5; border-color: rgba(248,113,113,.5); }
+
+/* No celular as colunas viram uma tira horizontal: rola de lado, mas ainda
+   da pra ver que existem outras etapas. */
+@media (max-width: 720px) {
+  .kanban { grid-auto-columns: 84vw; max-height: none; }
+  .kb-coluna { max-height: 70vh; }
+}
