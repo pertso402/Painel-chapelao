@@ -68,7 +68,7 @@ async function carregarPedidos() {
 
   P.pedidos = data || []
   renderPedidos()
-  sincronizarAlarmeDeNovos()
+  atualizarAvisoDeSom()
 }
 
 /* ─── REALTIME ──────────────────────────────────── */
@@ -134,7 +134,9 @@ function somDestravado() {
 function atualizarAvisoDeSom() {
   const el = document.getElementById('aviso-som')
   if (!el) return
-  // Só cobra o clique quando existe alarme tocando: fora disso é ruído visual.
+  // Só cobra o clique quando o som faz falta agora: taxa esperando cálculo ou
+  // pedido novo na fila (sinal de que o toque de chegada pode ter sido perdido).
+  // Fora disso o aviso seria ruído visual permanente.
   const temAlarme = (P.taxas?.length || 0) > 0 ||
     P.pedidos.some(p => normStatus(p.status) === 'pendente')
   el.style.display = (!somDestravado() && temAlarme) ? 'block' : 'none'
@@ -186,14 +188,13 @@ function sincronizarAlarmeDeTaxa() {
   atualizarAvisoDeSom()
 }
 
-/* ─── ALARME DE PEDIDO NOVO (estilo iFood) ──────────
-   Um bipe curto e discreto se perde no barulho de cozinha em hora de pico.
-   Este é alto, tem timbre cheio (três harmônicos empilhados) e sobe em duas
-   notas — o padrão que o ouvido reconhece de longe como "chegou pedido".
+/* ─── AVISO DE PEDIDO NOVO ──────────────────────────
+   Um toque agudo de 2 segundos, uma vez, quando o pedido entra. Só isso.
 
-   E, como no iFood, ele INSISTE: repete enquanto houver pedido parado em
-   "Novos". Tocar uma vez só é o que fazia pedido ficar esquecido na primeira
-   coluna. Para sozinho quando a fila de novos zera; ninguém precisa desligar. */
+   Já foi um alarme que repetia enquanto houvesse pedido na primeira coluna,
+   estilo iFood. Na prática vira barulho constante numa cozinha em hora de
+   pico, e barulho constante é ignorado — o oposto do que o aviso serve. Com o
+   quadro kanban, a fila parada já se denuncia sozinha na tela. */
 function acorde(base, inicio, duracao, volume) {
   const ctx = getAudio()
   // Fundamental + oitava + quinta. Um oscilador sozinho soa fino e some no
@@ -213,43 +214,28 @@ function acorde(base, inicio, duracao, volume) {
     // "click" seco que um setValueAtTime puro produz.
     gain.gain.setValueAtTime(0.0001, ctx.currentTime + inicio)
     gain.gain.exponentialRampToValueAtTime(v.vol, ctx.currentTime + inicio + 0.012)
+    // Sustenta no volume cheio e só cai no fim. Sem isso, uma nota de 2s
+    // passaria quase todo o tempo sumindo e soaria mais fraca que uma curta.
+    gain.gain.setValueAtTime(v.vol, ctx.currentTime + inicio + Math.max(0, duracao - 0.25))
     gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + inicio + duracao)
     osc.start(ctx.currentTime + inicio)
     osc.stop(ctx.currentTime + inicio + duracao + 0.02)
   }
 }
 
+const DURACAO_AVISO_S = 2
+
 function tocaSom() {
   try {
-    // dó-sol subindo, duas vezes — mesma cadência de "pedido novo" de app.
-    for (let volta = 0; volta < 2; volta++) {
-      const t = volta * 0.62
-      acorde(523.25, t,        0.30, 0.55)   // dó
-      acorde(783.99, t + 0.20, 0.45, 0.60)   // sol
-    }
+    // Uma nota só, aguda e sustentada. Agudo corta o ruído de cozinha melhor
+    // que grave, e o timbre empilhado dá corpo pra ela ser ouvida de longe
+    // sem precisar repetir.
+    acorde(1046.5, 0, DURACAO_AVISO_S, 0.6)   // dó agudo
   } catch (e) {}
 }
 
-/* Enquanto houver pedido em "Novos", o alarme repete. É o mesmo princípio do
-   alarme da taxa, mas com som diferente: quem está na cozinha precisa saber
-   o que chegou sem olhar a tela. */
-let alarmeNovosTimer = null
-const REPETIR_ALARME_MS = Number(localStorage.getItem('alarme_novos_seg') || 15) * 1000
-
-function sincronizarAlarmeDeNovos() {
-  const novos = P.pedidos.filter(p => normStatus(p.status) === 'pendente').length
-
-  if (novos > 0 && !alarmeNovosTimer) {
-    alarmeNovosTimer = setInterval(tocaSom, REPETIR_ALARME_MS)
-  } else if (novos === 0 && alarmeNovosTimer) {
-    clearInterval(alarmeNovosTimer)
-    alarmeNovosTimer = null
-  }
-  atualizarAvisoDeSom()
-}
-
-/* Som de alerta de atendimento — diferente do som de pedido novo (3 bips
-   agudos em vez de 1 sequência curta), pra ninguém confundir os dois. */
+/* Som de alerta de atendimento — 3 bips curtos, diferente da nota longa do
+   pedido novo, pra ninguém confundir os dois de ouvido. */
 function tocaSomAlerta() {
   try {
     const ctx = getAudio()
