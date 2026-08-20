@@ -14,6 +14,7 @@ const P = {
   alertas: [],
   taxas: [],
   mostrarCancelados: false,
+  dia: null,          // null = hoje; preenchido em carregarPedidos
   lojaAberta: true,
   midiaBuffet: null,
   cardapioHoje: false
@@ -48,10 +49,45 @@ async function carregarLojaStatus() {
 }
 
 /* ─── CARREGAR PEDIDOS ──────────────────────────── */
+/* ─── QUAL DIA O QUADRO ESTÁ MOSTRANDO ──────────────
+   O kanban misturava pedidos de todos os dias: sobrava pedido velho parado
+   numa coluna, entulhando a fila de hoje e fazendo parecer que havia trabalho
+   pendente que não existia mais.
+
+   Agora o quadro é sempre de UM dia — hoje, por padrão. Dias anteriores ficam
+   a um clique de distância, no seletor de data. */
+function limitesDoDiaISO(diaISO) {
+  // A virada do dia é a do restaurante, não a do fuso do aparelho. Um tablet
+  // configurado errado, ou o navegador em UTC, jogaria o pedido das 21h30 no
+  // dia seguinte e ele sumiria do quadro de quem o preparou.
+  const fuso = deslocamentoDoFuso(diaISO)
+  const ini = new Date(`${diaISO}T00:00:00${fuso}`)
+  const fim = new Date(ini.getTime() + 864e5)
+  return { ini: ini.toISOString(), fim: fim.toISOString() }
+}
+
+function deslocamentoDoFuso(diaISO) {
+  try {
+    const nome = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Sao_Paulo', timeZoneName: 'longOffset',
+    }).formatToParts(new Date(`${diaISO}T12:00:00Z`))
+      .find(p => p.type === 'timeZoneName')?.value || ''
+    const m = nome.match(/GMT([+-]d{2}:d{2})/)
+    if (m) return m[1]
+  } catch (e) {}
+  return '-03:00'   // horário de Brasília, sem horário de verão
+}
+
+function ehHoje() { return P.dia === hojeLocalISO() }
+
+function mudarDia(dia) {
+  P.dia = dia || hojeLocalISO()
+  carregarPedidos()
+}
+
 async function carregarPedidos() {
-  // Janela ampla (60 dias) para nunca esconder pedido ativo por virada de dia/fuso.
-  // As abas separam por status; o resumo "do dia" é calculado à parte (hoje local).
-  const desde = new Date(Date.now() - 60 * 864e5).toISOString()
+  if (!P.dia) P.dia = hojeLocalISO()
+  const { ini, fim } = limitesDoDiaISO(P.dia)
 
   const { data } = await sb
     .from('pedidos')
@@ -62,9 +98,10 @@ async function carregarPedidos() {
       clientes ( id, nome, telefone ),
       itens_pedido ( produto_id, nome_produto, quantidade, preco_unitario, total, observacao )
     `)
-    .gte('created_at', desde)
+    .gte('created_at', ini)
+    .lt('created_at', fim)
     .order('created_at', { ascending: false })
-    .limit(400)
+    .limit(500)
 
   P.pedidos = data || []
   renderPedidos()
@@ -77,6 +114,9 @@ function subscribeRealtime() {
     .on('postgres_changes', {
       event: 'INSERT', schema: 'public', table: 'pedidos'
     }, async payload => {
+      // Quem está consultando um dia passado não pode ser interrompido por
+      // pedido de hoje: o quadro dele não vai mostrar esse pedido mesmo.
+      if (!ehHoje()) return
       tocaSom()
       await carregarPedidos()
       notificar(`🔔 Novo pedido #${payload.new.numero_pedido}!`)
@@ -285,7 +325,36 @@ const PROXIMA_ETAPA = {
   pronto: 'saiu_entrega', saiu_entrega: 'entregue',
 }
 
+function dataPorExtenso(diaISO) {
+  const d = new Date(`${diaISO}T12:00:00`)
+  return d.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: '2-digit' })
+}
+
+function diaVizinho(diaISO, passo) {
+  const d = new Date(`${diaISO}T12:00:00`)
+  d.setDate(d.getDate() + passo)
+  return d.toISOString().slice(0, 10)
+}
+
+function renderBarraDia() {
+  const barra = document.getElementById('barra-dia')
+  if (!barra) return
+  const hoje = hojeLocalISO()
+  const noPassado = !ehHoje()
+
+  barra.className = 'barra-dia' + (noPassado ? ' passado' : '')
+  barra.innerHTML = `
+    <button class="bd-seta" onclick="mudarDia('${diaVizinho(P.dia, -1)}')" title="Dia anterior">◀</button>
+    <span class="bd-rotulo">${noPassado ? '📅 Pedidos de' : '🔔 Hoje —'} <b>${dataPorExtenso(P.dia)}</b></span>
+    <button class="bd-seta" onclick="mudarDia('${diaVizinho(P.dia, 1)}')" ${P.dia >= hoje ? 'disabled' : ''} title="Próximo dia">▶</button>
+    <input type="date" class="bd-data" value="${P.dia}" max="${hoje}" onchange="mudarDia(this.value)">
+    ${noPassado ? '<button class="bd-hoje" onclick="mudarDia(null)">↩ Voltar para hoje</button>' : ''}
+    <button class="btn-cancelados${P.mostrarCancelados ? ' ativo' : ''}" onclick="alternarCancelados()">✕ cancelados</button>
+  `
+}
+
 function renderPedidos() {
+  renderBarraDia()
   const quadro = document.getElementById('kanban')
   const loading = document.getElementById('loading-pedidos')
   if (loading) loading.style.display = 'none'
@@ -321,8 +390,6 @@ function renderPedidos() {
 
 function alternarCancelados() {
   P.mostrarCancelados = !P.mostrarCancelados
-  const btn = document.getElementById('btn-cancelados')
-  if (btn) btn.classList.toggle('ativo', P.mostrarCancelados)
   renderPedidos()
 }
 

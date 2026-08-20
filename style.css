@@ -1100,3 +1100,49 @@ body::before {
   .kanban { grid-auto-columns: 84vw; max-height: none; }
   .kb-coluna { max-height: 70vh; }
 }
+
+/* ─── BARRA DO DIA (acima do kanban) ──────────────────────────────────────
+   O quadro mostra um dia por vez. Antes vinham pedidos de todos os dias
+   misturados, e pedido velho parado numa coluna fazia parecer que havia
+   trabalho pendente que ja tinha acabado. */
+.barra-dia {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 9px 12px; margin-bottom: 12px;
+  background: rgba(255,255,255,.03);
+  border: 1px solid var(--border); border-radius: 12px;
+}
+/* Dia passado fica visivelmente diferente: e facil esquecer que voce nao
+   esta olhando o movimento de hoje e achar que a cozinha parou. */
+.barra-dia.passado {
+  background: rgba(167,139,250,.10);
+  border-color: rgba(167,139,250,.45);
+}
+
+.bd-rotulo { font-size: 13px; color: var(--text-muted); }
+.bd-rotulo b { color: var(--text); text-transform: capitalize; }
+
+.bd-seta {
+  width: 30px; height: 30px; border-radius: 8px; cursor: pointer;
+  font-size: 13px; font-weight: 800;
+  background: rgba(255,255,255,.07); color: var(--text);
+  border: 1px solid var(--border);
+}
+.bd-seta:hover:not(:disabled) { background: rgba(255,255,255,.15); }
+.bd-seta:disabled { opacity: .3; cursor: default; }
+
+.bd-data {
+  padding: 6px 9px; border-radius: 8px; font-size: 12.5px;
+  background: rgba(0,0,0,.28); color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.bd-hoje {
+  padding: 6px 12px; border-radius: 8px; cursor: pointer;
+  font-size: 12.5px; font-weight: 800;
+  background: var(--gold-grad); color: #2A1D00; border: none;
+}
+.barra-dia .btn-cancelados { margin: 0 0 0 auto; }
+
+@media (max-width: 720px) {
+  .barra-dia .btn-cancelados { margin-left: 0; }
+}
